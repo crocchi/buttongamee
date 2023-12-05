@@ -1,11 +1,18 @@
 
 //LIBRARY 
 const express = require('express');
+const session = require('express-session');
 const http = require('http');
 const bodyParser = require('body-parser');
 const { Server } = require("socket.io");
 const cors = require('cors');
 const router = require('./routers');
+
+const sessionMiddleware = session({
+    secret: "scrocchi",
+    resave: true,
+    saveUninitialized: true,
+  });
 
 class Main{
     app = express();
@@ -27,25 +34,33 @@ class Main{
         //CONF  EJS TEMPLATE ENGINE
         this.app.set('view engine', 'ejs');
 
+        //CONF EXPRESS SESSION
+        this.app.use(sessionMiddleware);
+
+
         //ROUTERS 
         this.app.use('/', router)
 
         //START HTTP SERVER
         this.server = http.createServer(this.app);
         this.io = new Server(this.server);
+        //share SESSION-EXPRESS IN SOCKET.IO ENGINE
+        this.io.engine.use(sessionMiddleware);
 
         // STARTING THE SERVER
         this.server.listen(this.PORT);
         console.log(`Server is listening on port ${this.PORT}`);
 
         let { userLogout,userLogin,userChat } = require("./event/socketEventHandlers")(this.io,this);
+        this.userSign = require("./event/account");
+        
         //SOCKET.IO EVENT HANDLER
         this.onConnection = (socket) => {
-            
-            socket.data.username = (socket.id).slice(1, 6);
-            const user = socket.data.username
-           // console.log(user);
 
+            //IMPOSTA NOME USER E SESSION
+            this.userSign(socket);
+            
+            console.log(`${socket.data.username} join - SESSION ID: ${socket.request.session.id} `)
             userLogin(socket);
 
             socket.on("disconnect", userLogout);

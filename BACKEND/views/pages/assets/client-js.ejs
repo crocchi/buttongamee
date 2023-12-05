@@ -19,6 +19,8 @@ btnConf = this.getEl("conf");
 btnStats = this.getEl("stats");
 btnChat = this.getEl("chat");
 btnPlayGame = this.getEl("playGame");
+// info account
+infoUsername = this.getEl("infoAccount");
 
 //imposta orario e temp 
 temp;
@@ -81,11 +83,19 @@ eventDom(){
     this.btnPlayGame.onclick = ()=> {
         this.openPag('gameArea');
       }
+    this.form.onsubmit = (e)=>{
+      e.preventDefault();
+      if (this.input.value) {
+          this.socket.emit('chat message', this.input.value);
+          this.input.value = '';
+        }
+    }
 
  }
 
 init(){
 
+  /*
     this.form.addEventListener('submit', function(e) {
         e.preventDefault();
         if (this.input.value) {
@@ -94,7 +104,7 @@ init(){
         }
       });
 
-
+*/
     this.socket.on('chat message', ({msg,username,isSystemMessage,time}) =>{
 
   
@@ -111,9 +121,11 @@ init(){
     });
 
 
-    this.socket.on("setNick", (userNick) => {
-        console.log('ti è stato dato il nickName...'+userNick);
-        //localStorage.setItem("nickName", userNick);
+    this.socket.on("setNick", (data) => {
+        console.log('ti è stato dato il nickName...'+data.msg);
+        this.infoUsername.innerHTML=`<p>USER: ${data.msg}</p> `
+        localStorage.setItem("userName", data.msg);
+        localStorage.setItem("userSession", data.session);
       });
 
     this.socket.on("chatRecord", (data) => {

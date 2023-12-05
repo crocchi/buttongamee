@@ -29,9 +29,9 @@ module.exports = (io,main) => {
     console.log(`${socket.data.username} send a msg..`);
     console.log(payload);
      io.emit('chat message', { 
-                    msg:`${socket.data.username} `, 
-                    username:socket.data.username, 
-                    isSystemMessage:true,
+                    msg:`${payload} `, 
+                    username: socket.data.username, 
+                    isSystemMessage:false,
                     time:main.getTime()
                 });
     // ...
@@ -40,6 +40,6 @@ module.exports = (io,main) => {
   return {
     userLogout,
     userLogin,
-    userChat
+    userChat,
   }
 }
