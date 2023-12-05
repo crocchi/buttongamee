@@ -111,7 +111,7 @@ init(){
      if(isSystemMessage){
         this.temp=` ${msg} <time> ${time} </time>`; 
         }else{
-        this.temp=`<user>${username}</user>: ${msg} <time> ${time} </time>`;
+        this.temp=`<user>${username}</user>: <msg>${msg}</msg> <time> ${time} </time>`;
         } 
     
      this.createEl('div',this.messages,this.temp, 'message chat')
