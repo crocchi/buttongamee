@@ -18,7 +18,6 @@ module.exports = (io) => {
                 });
     // ...
   };
-  };
 
   return {
     userLogout,

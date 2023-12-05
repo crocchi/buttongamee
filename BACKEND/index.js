@@ -6,7 +6,7 @@ const bodyParser = require('body-parser');
 const { Server } = require("socket.io");
 const cors = require('cors');
 const router = require('./routers');
-const { userLogout,userLogin } = require(".-/event/socketEventHandlers");
+const { userLogout,userLogin } = require("./event/socketEventHandlers");
 
 
 class Main{
@@ -24,7 +24,7 @@ class Main{
 
         //CONF CORS
         //PUBLIC DEV 
-        this.app.use(cors({origin: '*'}));
+        this.app.use(cors({origin: "*" } )) ;
 
         //CONF  EJS TEMPLATE ENGINE
         this.app.set('view engine', 'ejs');
