@@ -23,7 +23,7 @@ class Main{
         this.app.use(bodyParser.json());
 
         //CONF CORS
-        //PUBLIC DEV 
+        //PUBLIC DEV   ['https://www.section.io', 'https://www.google.com/']
         this.app.use(cors({origin: "*" } )) ;
 
         //CONF  EJS TEMPLATE ENGINE
@@ -42,9 +42,10 @@ class Main{
 
         //SOCKET.IO EVENT HANDLER
         this.onConnection = (socket) => {
-
+            
             socket.data.username = (socket.id).slice(1, 6);
             const user = socket.data.username
+            console.log(user);
 
             userLogin(socket.data.username);
 
