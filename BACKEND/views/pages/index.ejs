@@ -5,13 +5,14 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
        	<link crossorigin="anonymous" rel="icon" href="https://latitanti.altervista.org/BG/icoLogo.png" sizes="32x32">
-        <link  href="https://button-game-client.onrender.com/assets/main.css" rel="stylesheet" />
+        <%- include('./assets/css'); %>
 	</head>
 	<body class="is-preload">
 		<div id="wrapper">
 			<div id="bg"></div>
 			<div id="overlay"></div>
 			<div id="main">
+                
 
 				<!-- Header -->
 					<header id="header">
@@ -166,8 +167,7 @@
 			</div>
 		</div>
 	 <script src="https://kit.fontawesome.com/e4ff14a47e.js" crossorigin="anonymous"></script>
-     <script src="https://button-game-client.onrender.com/assets/client.js" crossorigin="anonymous"></script>
-          
+     <%- include('./assets/js'); %>    
         <script>
 		let user;
             window.onload = function() {

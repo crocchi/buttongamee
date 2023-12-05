@@ -6,8 +6,6 @@ const bodyParser = require('body-parser');
 const { Server } = require("socket.io");
 const cors = require('cors');
 const router = require('./routers');
-const { userLogout,userLogin } = require("./event/socketEventHandlers");
-
 
 class Main{
     app = express();
@@ -40,14 +38,15 @@ class Main{
         this.server.listen(this.PORT);
         console.log(`Server is listening on port ${this.PORT}`);
 
+        let { userLogout,userLogin } = require("./event/socketEventHandlers")(this.io,this);
         //SOCKET.IO EVENT HANDLER
         this.onConnection = (socket) => {
             
             socket.data.username = (socket.id).slice(1, 6);
             const user = socket.data.username
-            console.log(user);
+           // console.log(user);
 
-            userLogin(socket.data.username);
+            userLogin(socket);
 
             socket.on("disconnect", userLogout);
             //socket.on("order:read", readOrder);
@@ -77,6 +76,10 @@ class Main{
     close() {
         this.server.close()
         this.io.close()
+    }
+    getTime () {
+        this.timeNow= new Date().toLocaleTimeString();
+        return this.timeNow
     }
 }
 
