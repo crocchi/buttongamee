@@ -24,7 +24,7 @@ class Main{
 
         //CONF CORS
         //PUBLIC DEV   ['https://www.section.io', 'https://www.google.com/']
-        this.app.use(cors({origin: "*" } )) ;
+        this.app.use(cors({origin: false } )) ;
 
         //CONF  EJS TEMPLATE ENGINE
         this.app.set('view engine', 'ejs');
