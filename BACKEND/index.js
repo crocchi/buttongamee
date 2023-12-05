@@ -33,12 +33,12 @@ class Main{
         this.app.use('/', router)
 
         //START HTTP SERVER
-        this.server = http.createServer(app);
-        this.io = new Server(server);
+        this.server = http.createServer(this.app);
+        this.io = new Server(this.server);
 
         // STARTING THE SERVER
-        this.server.listen(PORT);
-        console.log(`Server is listening on port ${PORT}`);
+        this.server.listen(this.PORT);
+        console.log(`Server is listening on port ${this.PORT}`);
 
         //SOCKET.IO EVENT HANDLER
         this.onConnection = (socket) => {
@@ -107,3 +107,4 @@ app.get('/game', function (req, res) {
 module.exports = new App();
 
 */
+const server=new Main();
