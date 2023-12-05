@@ -89,8 +89,7 @@ init(){
     this.form.addEventListener('submit', function(e) {
         e.preventDefault();
         if (this.input.value) {
-          timeNow=this.getTime();
-          this.socket.emit('chat message', this.input.value,this.timeNow);
+          this.socket.emit('chat message', this.input.value);
           this.input.value = '';
         }
       });

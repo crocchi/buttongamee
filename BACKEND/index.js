@@ -38,7 +38,7 @@ class Main{
         this.server.listen(this.PORT);
         console.log(`Server is listening on port ${this.PORT}`);
 
-        let { userLogout,userLogin } = require("./event/socketEventHandlers")(this.io,this);
+        let { userLogout,userLogin,userChat } = require("./event/socketEventHandlers")(this.io,this);
         //SOCKET.IO EVENT HANDLER
         this.onConnection = (socket) => {
             
@@ -49,6 +49,7 @@ class Main{
             userLogin(socket);
 
             socket.on("disconnect", userLogout);
+            socket.on("chat message", userChat);
             //socket.on("order:read", readOrder);
             //socket.on("user:update-password", updatePassword);
           }
