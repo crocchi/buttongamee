@@ -167,9 +167,14 @@
 		</div>
 	 <script src="https://kit.fontawesome.com/e4ff14a47e.js" crossorigin="anonymous"></script>
         <script>
-            window.onload = function() { document.body.classList.remove('is-preload'); }
+		const user;
+            window.onload = function() {
+		    document.body.classList.remove('is-preload');
+		    user= new Page();
+	    }
                   window.ontouchmove = function() { return false; }
                   window.onorientationchange = function() { document.body.scrollTop = 0; }
+		
           </script>  
           
           <script src="assets/client.js"></script>
