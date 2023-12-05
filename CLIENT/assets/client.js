@@ -23,7 +23,8 @@ class Client {
 
 
     constructor(socket_url=this.SOCKET_ENDPOINT){
-        this.socket = io(this.SOCKET_ENDPOINT,{/*credentials: true,*/reconnectionAttempts: 3 , reconnectionDelay: 60000, })
+        this.socket = io(this.SOCKET_ENDPOINT,{
+          /*credentials: true,*/reconnectionAttempts: 3 , reconnectionDelay: 60000, cors: {origin: "https://*.render.com"} })
         this.init();
         this.eventDom();
     }
