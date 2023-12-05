@@ -2,7 +2,7 @@ class Client {
 
     socket;
     socket_url;
-    SOCKET_ENDPOINT="http://fra-srv.mywire.org:51420";
+    SOCKET_ENDPOINT="https://bg-q0gi.onrender.com:8000" || "http://fra-srv.mywire.org:51420";
 
     // HTML AREA
     DOCUMENT=window;
