@@ -5,21 +5,49 @@ const http = require('http');
 const bodyParser = require('body-parser');
 const { Server } = require("socket.io");
 const cors = require('cors');
+const router = require('./routers')
+
+
+class Main{
+    app = express();
+    
+    PORT=8000;
+
+    constructor(port){
+
+        this.PORT = port || this.PORT;
+
+        //CONF bodyparser
+        this.app.use(bodyParser.urlencoded({ extended: true }));
+        this.app.use(bodyParser.json());
+
+        //CONF CORS
+        //PUBLIC DEV 
+        this.app.use(cors({origin: '*'}));
+
+        //CONF  EJS TEMPLATE ENGINE
+        this.app.set('view engine', 'ejs');
+
+        //ROUTERS 
+        this.app.use('/', router)
+
+        //START HTTP SERVER
+        this.server = http.createServer(app);
+        this.io = new Server(server);
+
+        // STARTTING THE SERVER
+        this.server.listen(PORT);
+        console.log(`Server is listening on port ${PORT}`);
+
+
+    }
+    
+
+    
+}
 
 //EXPRESS CONF
-let app = express();
 
-//CONF bodyparser
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
-
-//CONF CORS   //PUBLIC DEV
-app.use(cors({
-    origin: '*'
-}));
-
-// set the view engine to ejs
-app.set('view engine', 'ejs');
 
 // index page
 app.get('/', function (req, res) {
@@ -29,13 +57,8 @@ app.get('/', function (req, res) {
   });
 
 
-const server = http.createServer(app);
-const io = new Server(server);
-//SERVER CONF PORT
-const PORT = 8000
-// STARTTING THE SERVER
-server.listen(PORT);
-console.log(`Server is listening on port ${PORT}`);
+
+
 
 
 /*
