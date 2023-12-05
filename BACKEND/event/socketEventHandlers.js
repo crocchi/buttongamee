@@ -9,8 +9,15 @@ module.exports = (io) => {
     // ...
   };
 
-  const userLogin = function (orderId, callback) {
+  const userLogin = function (user, callback) {
     // ...
+    io.emit('chat message', { 
+                    msg:`${user} join the party`, 
+                    username:user, 
+                    isSystemMessage:true
+                });
+    // ...
+  };
   };
 
   return {
