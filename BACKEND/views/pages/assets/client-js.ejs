@@ -4,6 +4,7 @@
 class Client {
 
 socket;
+token=localStorage.getItem('userName');
 socket_url;
 SOCKET_ENDPOINT;//"https://bg-q0gi.onrender.com" || "http://fra-srv.mywire.org:51420";
 
@@ -28,7 +29,9 @@ timeNow= this.getTime();
 
 //socket_url=this.SOCKET_ENDPOINT
 constructor(){
-    this.socket = io()
+    this.socket = io({
+     auth: {token: this.token}
+})
     //this.SOCKET_ENDPOINT,{ /*credentials: true,*/reconnectionAttempts: 3 , reconnectionDelay: 60000, cors: {origin: "https://*.render.com"} })
     this.init();
     this.eventDom();
@@ -111,12 +114,12 @@ init(){
      if(isSystemMessage){
         this.temp=` ${msg} <time> ${time} </time>`; 
         }else{
-        this.temp=`<user>${username}</user>: <msg>${msg}</msg> <time> ${time} </time>`;
+        this.temp=`<user>${username}</user>: <msg>${msg}</msg> <time>(${time})</time>`;
         } 
     
      this.createEl('div',this.messages,this.temp, 'message chat')
 
-     document.querySelector("#myModal > div").scrollTo(0,7)
+     document.querySelector("#myModal > div").scrollTo(0,1000)
 
     });
 

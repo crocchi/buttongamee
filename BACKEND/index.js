@@ -59,6 +59,7 @@ class Main{
 
             //IMPOSTA NOME USER E SESSION
             this.userSign(socket);
+            console.log(socket)
             
             console.log(`${socket.data.username} join - SESSION ID: ${socket.request.session.id} `)
             userLogin(socket);
