@@ -96,10 +96,9 @@ eventDom(){
 
 }
 chatRecord(data){
-        console.log(data);
-
-        for (let i = data.length-30; i < data.length; i++) {
-            this.temp=`<user>${data[i].userName}</user>: ${data[i].content} <time> ${data[i].createdAt} </time>`;
+        
+        for (let i = 0; i < data.length; i++) {
+            this.temp=`<user>${data[i].nick}</user>: ${data[i].text} <time> ${data[i].data} </time>`;
             this.createEl('div',this.messages,this.temp, 'message chat');
             }
           
@@ -138,7 +137,8 @@ init(){
         this.infoUsername.innerHTML=`<p>USER: ${data.msg}</p> `
         localStorage.setItem("userName", data.msg);
         localStorage.setItem("userSession", data.session);
-        //this.chatRecord(data.oldChat);
+        this.chatRecord(data.oldChat);
+        //console.log(data.oldChat);
       });
 
     this.socket.on("chatRecord", (data) => {

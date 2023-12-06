@@ -8,7 +8,7 @@ mongoose
         console.error('Connection error', e.message)
     })
 
-const db = mongoose.connection
+const db = mongoose.connection;
 
 //db.on('error', console.error(console, 'MongoDB connection error:'));
 

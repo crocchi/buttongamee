@@ -12,7 +12,7 @@ const userSign = function (socket) {
     this.io.to(socket.id).emit('setNick', { 
                     msg:`${this.username}`,
                     session:`${this.session}`,
-                    //oldChat:this.chatTemp
+                    oldChat: this.chatTemp
                 });
     // ...
   };

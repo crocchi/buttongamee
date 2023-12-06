@@ -19,7 +19,7 @@ const sessionMiddleware = session({
 
 class Main{
     app = express();
-    
+    ChatMsg = require('./db/chat-model');
     PORT=8000;
 
     constructor(port){
@@ -57,12 +57,13 @@ class Main{
         let { userLogout,userLogin,userChat } = require("./event/socketEventHandlers")(this.io,this);
         this.userSign = require("./event/account");
         //DOWNLOAD CHAT HISTORY FROM DB
-        this.chatTemp = ChatMsg.find({});
+        
         //SOCKET.IO EVENT HANDLER
-        this.onConnection = (socket) => {
+        this.onConnection = async (socket) => {
 
             //IMPOSTA NOME USER E SESSION
             this.userSign(socket);
+            this.chatTemp = await ChatMsg.find({});
             console.log(socket.handshake.auth)
             //console.log(this.chatTemp);
             

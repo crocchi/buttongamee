@@ -28,6 +28,12 @@ module.exports = (io,main) => {
     const socket = this; // hence the 'function' above, as an arrow function will not work
     console.log(`${socket.data.username} send a msg..${payload}`);
     //console.log(payload);
+    let msgUpdate = new main.ChatMsg({
+      nick: socket.data.username,
+      text: payload,
+      data: main.getTime()
+    });
+    msgUpdate.save()//.then(() => console.log('meow'));
      io.emit('chat message', { 
                     msg:`${payload} `, 
                     username: socket.data.username, 
