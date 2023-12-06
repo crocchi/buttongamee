@@ -7,6 +7,9 @@ const bodyParser = require('body-parser');
 const { Server } = require("socket.io");
 const cors = require('cors');
 const router = require('./routers');
+//DATABASE
+const db = require('./db/db');
+const ChatMsg = require('./db/chat-model')
 
 const sessionMiddleware = session({
     secret: "scrocchi",
@@ -53,13 +56,15 @@ class Main{
 
         let { userLogout,userLogin,userChat } = require("./event/socketEventHandlers")(this.io,this);
         this.userSign = require("./event/account");
-        
+        //DOWNLOAD CHAT HISTORY FROM DB
+        this.chatTemp = ChatMsg.find({});
         //SOCKET.IO EVENT HANDLER
         this.onConnection = (socket) => {
 
             //IMPOSTA NOME USER E SESSION
             this.userSign(socket);
-            console.log(socket)
+            console.log(socket.handshake.auth)
+            //console.log(this.chatTemp);
             
             console.log(`${socket.data.username} join - SESSION ID: ${socket.request.session.id} `)
             userLogin(socket);
@@ -105,11 +110,10 @@ class Main{
 /*
 //DATABASE MONGODB CLOUD
 //DB.JS COLLEGAMENTO AL DB MONGO CLOUD
-const db = require('./db/db.js');
-// SE CE QLC PROBLEMA A COLLEGARSI AL DB VISUALIZZA ERRORE 
-db.on('error', console.error.bind(console, 'MongoDB connection error:'));
 
-const ChatMsg = require('./db/chat-model')
+// SE CE QLC PROBLEMA A COLLEGARSI AL DB VISUALIZZA ERRORE 
+
+
 // use res.render to load up an ejs view file
 
 
