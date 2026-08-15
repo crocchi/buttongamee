@@ -158,6 +158,8 @@ selectedButton = null;
 remainingPairs = 0;
 score = 0;
 totalScore = 0;
+my1v1Score = 0;
+opp1v1Score = 0;
 startTime = 0;
 currentMode = null;
 
@@ -239,6 +241,9 @@ bindGameEvents(){
     this.socket.on('gameSet', (payload) => this.onGameSet(payload));
     this.socket.on('gameOverAck', (payload) => this.onGameOverAck(payload));
     this.socket.on('gameResult', (payload) => this.onGameResult(payload));
+    this.socket.on('buttonSelected', (payload) => this.onButtonSelected(payload));
+    this.socket.on('pairMatched', (payload) => this.onPairMatched(payload));
+    this.socket.on('pairMismatch', (payload) => this.onPairMismatch(payload));
     this.socket.on('statsData', (rows) => this.renderStats(rows));
 }
 
@@ -280,6 +285,8 @@ startGame(mode, puzzle, liv){
     this.score = 0;
     this.selectedButton = null;
     this.remainingPairs = puzzle.length / 2;
+    this.my1v1Score = 0;
+    this.opp1v1Score = 0;
     this.startTime = Date.now();
     this.buttonArea.innerHTML = '';
     this.gameLevelEl.innerText = mode === '1vs1' ? '1 VS 1' : `LIVELLO ${liv || 1}`;
@@ -313,7 +320,26 @@ startGame(mode, puzzle, liv){
     this.openPag('gameArea');
 }
 
+getGameButton(index){
+    return this.buttonArea.querySelector(`.buttonGame[data-index="${index}"]`);
+}
+
 onButtonClick(btn){
+    if(this.currentMode === '1vs1'){
+        this.onButtonClick1vs1(btn);
+    } else {
+        this.onButtonClickCampaign(btn);
+    }
+}
+
+// modalità 1vs1: il click viene solo inoltrato al server, che tiene il tabellone condiviso
+// e decide se il bottone è selezionabile (non lo è se già preso dall'avversario)
+onButtonClick1vs1(btn){
+    if(btn.disabled) return;
+    this.socket.emit('game click', { index: Number(btn.dataset.index) });
+}
+
+onButtonClickCampaign(btn){
     if(btn.disabled || btn === this.selectedButton) return;
 
     if(!this.selectedButton){
@@ -360,11 +386,76 @@ onButtonClick(btn){
     }
 }
 
-// effetto grafico di "esplosione" quando una coppia viene accoppiata: i bottoni si ingrandiscono e svaniscono
+// un giocatore (io o l'avversario) ha selezionato un bottone: lo blocco per entrambi finché non si risolve
+onButtonSelected({ index, by }){
+    const btn = this.getGameButton(index);
+    if(!btn) return;
+    btn.disabled = true;
+    btn.classList.add(by === this.socket.id ? 'selected' : 'locked');
+}
+
+onPairMatched({ indices, extraIndices, by, bonus, points }){
+    sfx.match();
+    if(bonus === 'point') sfx.point();
+    if(bonus === 'bomb') sfx.bomb();
+
+    const buttons = [...indices, ...(extraIndices || [])]
+        .map(i => this.getGameButton(i))
+        .filter(Boolean);
+    buttons.forEach(b => { b.disabled = true; b.classList.remove('selected', 'locked'); });
+    this.popButtons(...buttons);
+
+    if(bonus === 'point') this.showBonusMessage('Atom the Point: +50 punti extra!');
+    if(bonus === 'bomb') this.showBonusMessage('Atom the Bomb: distrutta un\'altra coppia!');
+
+    if(by === this.socket.id){ this.my1v1Score += points; } else { this.opp1v1Score += points; }
+    this.updateScoreboard();
+}
+
+onPairMismatch({ indices }){
+    sfx.wrong();
+    indices.forEach(i => {
+        const btn = this.getGameButton(i);
+        if(!btn) return;
+        btn.classList.add('wrong');
+        setTimeout(() => {
+            btn.classList.remove('wrong', 'selected', 'locked');
+            btn.disabled = false;
+        }, 400);
+    });
+}
+
+// effetto grafico di "esplosione" quando una coppia viene accoppiata: i bottoni si ingrandiscono,
+// svaniscono e vengono rimossi dalla griglia, che si richiude "a calamita" attorno al vuoto rimasto
 popButtons(...buttons){
-    buttons.forEach(b => {
-        b.classList.add('popping');
-        setTimeout(() => b.classList.add('matched'), 450);
+    buttons.forEach(b => b.classList.add('popping'));
+    setTimeout(() => {
+        this.animateReflow(() => buttons.forEach(b => b.remove()));
+    }, 450);
+}
+
+// tecnica FLIP: misura le posizioni prima/dopo la rimozione e anima la differenza,
+// così i bottoni rimasti "scivolano" verso il vuoto come attratti da una calamita
+animateReflow(removeFn){
+    const before = new Map();
+    this.buttonArea.querySelectorAll('.buttonGame').forEach(b => before.set(b, b.getBoundingClientRect()));
+
+    removeFn();
+
+    this.buttonArea.querySelectorAll('.buttonGame').forEach(b => {
+        const prev = before.get(b);
+        if(!prev) return;
+        const next = b.getBoundingClientRect();
+        const dx = prev.left - next.left;
+        const dy = prev.top - next.top;
+        if(!dx && !dy) return;
+
+        b.style.transition = 'none';
+        b.style.transform = `translate(${dx}px, ${dy}px)`;
+        requestAnimationFrame(() => {
+            b.style.transition = 'transform 0.35s ease';
+            b.style.transform = '';
+        });
     });
 }
 
@@ -393,6 +484,13 @@ showBonusMessage(text){
 }
 
 updateScoreboard(){
+    if(this.currentMode === '1vs1'){
+        this.gameScoreEl.innerText = `Tu: ${this.my1v1Score}`;
+        this.gameTotalScoreEl.innerText = `Avversario: ${this.opp1v1Score}`;
+        this.gameRemainingEl.innerText = '';
+        return;
+    }
+
     this.gameScoreEl.innerText = `Punteggio livello: ${this.score}`;
     this.gameTotalScoreEl.innerText = `Totale: ${this.totalScore + this.score}`;
     this.gameRemainingEl.innerText = `NUMERI RIMASTI: ${this.remainingPairs}`;
@@ -406,11 +504,14 @@ onGameOverAck({ score, elapsedMs, topScores, liv }){
     this.openPag('game');
 }
 
-onGameResult({ result, reason }){
+onGameResult({ result, reason, score, opponentScore }){
+    const punteggi = (score !== undefined && opponentScore !== undefined) ? ` (${score} vs ${opponentScore})` : '';
     if(result === 'win'){
-        alert(reason === 'opponent-disconnected' ? 'Hai vinto! Il tuo avversario si è disconnesso.' : 'Hai vinto!');
+        alert((reason === 'opponent-disconnected' ? 'Hai vinto! Il tuo avversario si è disconnesso.' : 'Hai vinto!') + punteggi);
+    } else if(result === 'draw'){
+        alert('Pareggio!' + punteggi);
     } else {
-        alert('Hai perso, riprova!');
+        alert('Hai perso, riprova!' + punteggi);
     }
     this.openPag('game');
 }

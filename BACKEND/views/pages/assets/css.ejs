@@ -1534,13 +1534,15 @@ user {
     pointer-events: none;
 }
 
-.buttonGame.matched {
-    visibility: hidden;
-    cursor: default;
-}
-
 .buttonGame.wrong {
     outline: 4px solid #d11;
+}
+
+/* 1vs1: bottone preso dall'avversario, non selezionabile finché non si risolve */
+.buttonGame.locked {
+    outline: 4px solid #888;
+    opacity: 0.55;
+    cursor: not-allowed;
 }
 
 #gameInfo {

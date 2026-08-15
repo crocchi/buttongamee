@@ -55,7 +55,7 @@ class Main{
         initDb().catch(e => console.error('Errore inizializzazione DB:', e.message));
 
         const userSign = require("./event/account");
-        const { gameStart, gameOnline1vs1, gameOver, gameDisconnectCleanup, statsRequest } = require("./event/game")(this.io, this);
+        const { gameStart, gameOnline1vs1, gameClick, gameOver, gameDisconnectCleanup, statsRequest } = require("./event/game")(this.io, this);
 
         //SOCKET.IO EVENT HANDLER
         this.onConnection = (socket) => {
@@ -68,6 +68,7 @@ class Main{
             socket.on("disconnect", gameDisconnectCleanup);
             socket.on("game start", gameStart);
             socket.on("gameOnline 1vs1", gameOnline1vs1);
+            socket.on("game click", gameClick);
             socket.on("game over", gameOver);
             socket.on("stats request", statsRequest);
           }
