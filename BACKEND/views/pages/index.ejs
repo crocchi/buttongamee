@@ -31,8 +31,6 @@
 							<!--	<li><a href="#" class="fa-solid fa-house"><span class="label">Home</span></a></li>-->
 								<li><a href="#" id='play' class="fa-solid fa-play"><span class="label">PlayGame</span></a></li>
 								<li><a href="#" id='stats' class="fa-solid fa-star"><span class="label">Stats</span></a></li>
-                                <li><a href="#" id='chat'  class="fa-solid fa-comment"><span class="label">Chat</span></a></li>
-                                
 								<li><a href="#" id='conf' class="fa-solid fa-gear"><span class="label">Conf</span></a></li>
                                </ul>
 						</nav>
@@ -55,21 +53,9 @@
                 <div id="modal-document" class="modal-content">
                             <div class="modal-header starr">
                                 <span class="close">&times;</span>
-                                <span id='labelLogo' class="fa-solid fa-comment"></span>
-                                <span id="labelPage" class="label"> CHAT </span>
+                                <span id='labelLogo' class="fa-solid fa-gear"></span>
+                                <span id="labelPage" class="label"> CONF </span>
                             </div>
-
-                 <!--        PAGINA CHAT           -->
-                    <div id='modal-body' class="modal-body hide">
-                            <br><br>
-                            <ul id="messages"></ul>
-                            <br><br>
-                     <div id='modal-footer' class="modal-footer">
-                        <form id="form" action="">
-                        <input id="input" autocomplete="off" /><button>Send</button>
-                        </form>
-                     </div>
-                    </div>
 
                     <!--        PAGINA CONFIGURAZIONE           -->
                     <div id='modal-conf-page' class="modal-body hide">
@@ -126,6 +112,7 @@
                     <div id='modal-conf-stat' class="modal-body hide">
                         <h2>Classifica</h2>
                         <br>
+                        <ul id="statsListEl"></ul>
                     </div> 
 
 
@@ -135,7 +122,7 @@
         <br>
         <div class="modal-body">
                 
-        <div id='playGame' class="contact">
+        <div onclick="playStart(1,20)" class="contact">
             <img class="pic imgPlaygame" src="https://latitanti.altervista.org/BG/img/png.png" ></img>
             <h2>CAMPAIGN </h2>
          </div>
@@ -157,6 +144,13 @@
      <!--          PAGINA PLAYGROUND     .gaming-area -->
      <div id='modal-playGround' class="modal-body hide">
         <h2>Giochi Area</h2>
+        <div id="gameInfo">
+            <h2 id="gameLevel"></h2>
+            <span id="gameScore">Punteggio: 0</span>
+            &nbsp;&bull;&nbsp;
+            <span id="gameRemaining"></span>
+            <div id="gameBonusMsg"></div>
+        </div>
         <div id="buttonAreaH">
        
        </div>
@@ -191,12 +185,12 @@
 		<script>
 			
             let playStart = (liv,num)=>{
-            socket.emit('game start',liv,num );// liv=1,num=20
+            user.socket.emit('game start',liv,num );// liv=1,num=20
             }
 
-        let playStart1vs1 = (liv)=>{
+        let playStart1vs1 = ()=>{
             console.log("invio richiesta al server [ 1 versus 1 ] ")
-            socket.emit('gameOnline 1vs1','join' );// liv=1,num=20
+            user.socket.emit('gameOnline 1vs1','join' );
             document.getElementById('waitingplayerText').innerText=' Invio richiesta al server...';
             }
 

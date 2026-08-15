@@ -1,38 +1,35 @@
 
-//LIBRARY 
+//LIBRARY
+require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
 const http = require('http');
-const bodyParser = require('body-parser');
 const { Server } = require("socket.io");
 const cors = require('cors');
 const router = require('./routers');
 //DATABASE
-const db = require('./db/db');
-const ChatMsg = require('./db/chat-model')
+const { initDb } = require('./db/db');
 
 const sessionMiddleware = session({
-    secret: "scrocchi",
+    secret: process.env.SESSION_SECRET || "scrocchi",
     resave: true,
     saveUninitialized: true,
   });
 
 class Main{
     app = express();
-    ChatMsg = require('./db/chat-model');
-    PORT=8000;
+    PORT = process.env.PORT || 8000;
 
     constructor(port){
 
         this.PORT = port || this.PORT;
 
         //CONF bodyparser
-        this.app.use(bodyParser.urlencoded({ extended: true }));
-        this.app.use(bodyParser.json());
+        this.app.use(express.urlencoded({ extended: true }));
+        this.app.use(express.json());
 
         //CONF CORS
-        //PUBLIC DEV   ['https://www.section.io', 'https://www.google.com/']
-        this.app.use(cors({origin: ['https://*.onrender.com'] } )) ;
+        this.app.use(cors({ origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*' }));
 
         //CONF  EJS TEMPLATE ENGINE
         this.app.set('view engine', 'ejs');
@@ -54,46 +51,28 @@ class Main{
         this.server.listen(this.PORT);
         console.log(`Server is listening on port ${this.PORT}`);
 
-        let { userLogout,userLogin,userChat } = require("./event/socketEventHandlers")(this.io,this);
-        this.userSign = require("./event/account");
-        //DOWNLOAD CHAT HISTORY FROM DB
-        
+        //DATABASE MYSQL - crea le tabelle se non esistono
+        initDb().catch(e => console.error('Errore inizializzazione DB:', e.message));
+
+        const userSign = require("./event/account");
+        const { gameStart, gameOnline1vs1, gameOver, gameDisconnectCleanup, statsRequest } = require("./event/game")(this.io, this);
+
         //SOCKET.IO EVENT HANDLER
-        this.onConnection = async (socket) => {
+        this.onConnection = (socket) => {
 
             //IMPOSTA NOME USER E SESSION
-            this.userSign(socket);
-            this.chatTemp = await ChatMsg.find({});
-            console.log(socket.handshake.auth)
-            //console.log(this.chatTemp);
-            
-            console.log(`${socket.data.username} join - SESSION ID: ${socket.request.session.id} `)
-            userLogin(socket);
+            userSign(socket);
 
-            socket.on("disconnect", userLogout);
-            socket.on("chat message", userChat);
-            //socket.on("order:read", readOrder);
-            //socket.on("user:update-password", updatePassword);
+            console.log(`${socket.data.username} join - SESSION ID: ${socket.request.session.id} `)
+
+            socket.on("disconnect", gameDisconnectCleanup);
+            socket.on("game start", gameStart);
+            socket.on("gameOnline 1vs1", gameOnline1vs1);
+            socket.on("game over", gameOver);
+            socket.on("stats request", statsRequest);
           }
 
         this.io.on("connection", this.onConnection);
-        
-        /*
-        this.io.on('connection', async (socket) => {    
-
-            
-
-            socket.on('disconnect', () => {
-                logger.info(`${user} disconnected!`);
-                this.io.emit('chat message', { 
-                    msg:`${user} left the party`, 
-                    username: user, 
-                    isSystemMessage:true, 
-                    timestamp: null
-                });
-            });
-
-        })*/
     }  
 
     close() {
@@ -106,31 +85,5 @@ class Main{
     }
 }
 
-
-
-/*
-//DATABASE MONGODB CLOUD
-//DB.JS COLLEGAMENTO AL DB MONGO CLOUD
-
-// SE CE QLC PROBLEMA A COLLEGARSI AL DB VISUALIZZA ERRORE 
-
-
-// use res.render to load up an ejs view file
-
-
-
-// index page
-app.get('/game', function (req, res) {
-
-  // console.log(req.rawHeaders);
-  res.render('pages/game', {
-    msg: req.rawHeaders
-  });
-});
-
-
-
-module.exports = new App();
-
-*/
 const server=new Main();
+module.exports = server;

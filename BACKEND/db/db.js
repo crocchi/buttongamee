@@ -1,15 +1,28 @@
-const mongoose = require('mongoose');
-mongoose.set('strictQuery', true);
-const URI = "mongodb+srv://ziocro:9bMY0VBNDWe2z8vj@cluster0.hyj19vr.mongodb.net/?retryWrites=true&w=majority";
+require('dotenv').config();
+const mysql = require('mysql2/promise');
 
-mongoose
-    .connect(URI, /*{ useNewUrlParser: true }*/)
-    .catch(e => {
-        console.error('Connection error', e.message)
-    })
+const pool = mysql.createPool({
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 3306,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+});
 
-const db = mongoose.connection;
+// crea le tabelle necessarie se non esistono già
+async function initDb() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS scores (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nickname VARCHAR(64) NOT NULL,
+            mode VARCHAR(20) NOT NULL DEFAULT 'campain',
+            score INT NOT NULL,
+            elapsed_ms INT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+}
 
-//db.on('error', console.error(console, 'MongoDB connection error:'));
-
-module.exports = db;
+module.exports = { pool, initDb };

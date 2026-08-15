@@ -5,34 +5,22 @@ class Client {
 
 socket;
 token=localStorage.getItem('userName');
-socket_url;
-SOCKET_ENDPOINT;//"https://bg-q0gi.onrender.com" || "http://fra-srv.mywire.org:51420";
 
 // HTML AREA
 DOCUMENT=window;
-messages = this.getEl('messages');
-form = this.getEl('form');
-input = this.getEl('input');
 span = document.getElementsByClassName("close")[0];
   // Get the button homepage
 btnPlay = this.getEl("play");
 btnConf = this.getEl("conf");
 btnStats = this.getEl("stats");
-btnChat = this.getEl("chat");
 btnPlayGame = this.getEl("playGame");
 // info account
 infoUsername = this.getEl("infoAccount");
 
-//imposta orario e temp 
-temp;
-timeNow= this.getTime();
-
-//socket_url=this.SOCKET_ENDPOINT
 constructor(){
     this.socket = io({
      auth: {token: this.token}
 })
-    //this.SOCKET_ENDPOINT,{ /*credentials: true,*/reconnectionAttempts: 3 , reconnectionDelay: 60000, cors: {origin: "https://*.render.com"} })
     this.init();
     this.eventDom();
 }
@@ -70,10 +58,6 @@ eventDom(){
         this.closeModal();
       }
 
-    this.btnChat.onclick = ()=> {
-        this.openPag('chat');
-      }
-
     this.btnConf.onclick = ()=> {
         this.openPag('conf');
       }
@@ -86,110 +70,17 @@ eventDom(){
     this.btnPlayGame.onclick = ()=> {
         this.openPag('gameArea');
       }
-    this.form.onsubmit = (e)=>{
-      e.preventDefault();
-      if (this.input.value) {
-          this.socket.emit('chat message', this.input.value);
-          this.input.value = '';
-        }
-    }
 
 }
-chatRecord(data){
-        
-        for (let i = 0; i < data.length; i++) {
-            this.temp=`<user>${data[i].nick}</user>: ${data[i].text} <time> ${data[i].data} </time>`;
-            this.createEl('div',this.messages,this.temp, 'message chat');
-            }
-          
-};
 
 init(){
-
-  /*
-    this.form.addEventListener('submit', function(e) {
-        e.preventDefault();
-        if (this.input.value) {
-          this.socket.emit('chat message', this.input.value);
-          this.input.value = '';
-        }
-      });
-
-*/
-    this.socket.on('chat message', ({msg,username,isSystemMessage,time}) =>{
-
-  
-     if(isSystemMessage){
-        this.temp=` ${msg} <time> ${time} </time>`; 
-        }else{
-        this.temp=`<user>${username}</user>: <msg>${msg}</msg> <time>(${time})</time>`;
-        } 
-    
-     this.createEl('div',this.messages,this.temp, 'message chat')
-
-     document.querySelector("#myModal > div").scrollTo(0,1000)
-
-    });
-
 
     this.socket.on("setNick", (data) => {
         console.log('ti è stato dato il nickName...'+data.msg);
         this.infoUsername.innerHTML=`<p>USER: ${data.msg}</p> `
         localStorage.setItem("userName", data.msg);
         localStorage.setItem("userSession", data.session);
-        this.chatRecord(data.oldChat);
-        //console.log(data.oldChat);
       });
-
-    this.socket.on("chatRecord", (data) => {
-        console.log(data);
-
-        for (let i = data.length-30; i < data.length; i++) {
-            this.temp=`<user>${data[i].userName}</user>: ${data[i].content} <time> ${data[i].createdAt} </time>`;
-            this.createEl('div',this.messages,this.temp, 'message chat');
-            }
-          
-        });
-
-    this.socket.on('gameSet', (data,typeGame)=> {
-            console.log(data);
-
-            if(typeGame==="campain"){  
-
-                openPage('playGround');
-                let page= document.getElementById('buttonAreaH');
-
-            for (let i = 0; i < data.length; i++) {
-                //creazione button
-                var item = document.createElement('button');
-                //aggiungi classe al botton
-                item.className='buttonGame effettoCiakka';
-                 //creazione elemento spam ove contenitore numero
-                 var itemDue = document.createElement('spam');
-                 //prendi il numero da data
-                 itemDue.innerText=data[i]
-                 item.appendChild(itemDue);
-                 page.appendChild(item);
-            }
-
-            }else{
-
-                // if(typeGame==="1vs1"
-            //messaggio x testare anzi x avvisare i giocatori x il 1vs1
-            let page= document.getElementById('waitingplayer')
-       //se la pagine contiene la classe hide la leva...altrimenti nn fa nulla...loool;
-       if(page.classList.contains("hide")){
-              page.classList.toggle("hide");
-        } else{ };
-            document.getElementById('waitingplayerText').innerText=data;
-        }
-
-    ///QUI CREO LA LOGICA DEL GIOCO SINGOLO CAMPAIGN UNA VOLTA RICEVUTO ARRAY CON I NUMERI
-       
-            
-        
-        })
-
 
 }
 
@@ -200,7 +91,6 @@ class Page extends Client{
 
 // GET ALL THE PAGE AREA in a containers
 pageConf =this.getEl('modal-conf-page')        // PAGINA CONFIGURAZIONE
-pageChat= this.getEl('modal-body')  // PAGINA CHAT
 pageStat= this.getEl('modal-conf-stat')  // PAGINA STAT CLASSSSIFICA
 pageGame= this.getEl('modal-conf-game');  //INIZIO SCELTA GIOCO
 
@@ -210,6 +100,27 @@ logoHeader= this.getEl('labelLogo');
 // Get the modal
 modal = this.getEl("myModal");
 
+// AREA E CONTATORI DEL GIOCO
+buttonArea = this.getEl('buttonAreaH');
+gameLevelEl = this.getEl('gameLevel');
+gameScoreEl = this.getEl('gameScore');
+gameRemainingEl = this.getEl('gameRemaining');
+gameBonusMsgEl = this.getEl('gameBonusMsg');
+waitingPlayer = this.getEl('waitingplayer');
+waitingPlayerText = this.getEl('waitingplayerText');
+statsListEl = this.getEl('statsListEl');
+
+// STATO PARTITA IN CORSO
+selectedButton = null;
+remainingPairs = 0;
+score = 0;
+startTime = 0;
+currentMode = null;
+
+constructor(){
+    super();
+    this.bindGameEvents();
+}
 
 // Get the <span> element that closes the modal
 
@@ -221,9 +132,6 @@ this.modal.style.display = "block";
 switch(page) {
     case 'conf':
       this.buildPage('conf')
-      break;
-    case 'chat':
-        this.buildPage('chat')
       break;
     case 'stat':
         this.buildPage('stat')
@@ -246,7 +154,6 @@ let page=pageToBuild;
 if(page==='gameArea'){ this.closeModal()}
 let infoPage={ 
     conf:[this.pageConf,"CONFIGURAZIONI","fa-solid fa-gear"],
-    chat:[this.pageChat,"CHAT","fa-solid fa-comment"],
     stat:[this.pageStat,"CLASSIFICA","fa-solid fa-star"],
     game:[this.pageGame,"GAME","fa-solid fa-play"],
     gameArea:[this.pageGameArea,"PLAYGAME","fa-solid fa-play"]
@@ -260,14 +167,16 @@ if(pageTemp.classList.contains("hide")){
 this.testoHeader.innerText=infoPage[`${page}`][1];
 this.logoHeader.className=infoPage[`${page}`][2];
 
+if(page==='stat'){
+    this.socket.emit('stats request');
+}
+
 }
 
 closeModal(){
 
          //se la pagine contiene la classe hide la leva...altrimenti nn fa nulla...loool;
    if(this.pageConf.classList.contains("hide")){ } else{ this.pageConf.classList.toggle("hide");  };
-   
-   if(this.pageChat.classList.contains("hide")){ } else{ this.pageChat.classList.toggle("hide");  };
 
    if(this.pageStat.classList.contains("hide")){ } else{ this.pageStat.classList.toggle("hide");  };
 
@@ -275,19 +184,172 @@ closeModal(){
 
    if(this.pageGameArea.classList.contains("hide")){ } else{ this.pageGameArea.classList.toggle("hide");  };
 }
-/* SE apri costructor devo usare super x ereditare le propietà di client
-constructor(name, age, school) {
-    super(name, age);
-    this.school = school;
-  }
-*/
 
+// ---- LOGICA DI GIOCO ----
+
+bindGameEvents(){
+    this.socket.on('gameSet', (payload) => this.onGameSet(payload));
+    this.socket.on('gameOverAck', (payload) => this.onGameOverAck(payload));
+    this.socket.on('gameResult', (payload) => this.onGameResult(payload));
+    this.socket.on('statsData', (rows) => this.renderStats(rows));
 }
-//let game=new GameClient("campain") 
-class GameClient extends Client{
 
-typeGame;//che tipo di gioco vuoi giocare ..campain o 1vs1
-//pageGameArea html conten
+onGameSet(payload){
+    const { mode, puzzle, data, liv } = payload;
+
+    if(mode === '1vs1-wait'){
+        if(this.waitingPlayer.classList.contains('hide')){
+            this.waitingPlayer.classList.toggle('hide');
+        }
+        this.waitingPlayerText.innerText = data;
+        return;
+    }
+
+    if(!this.waitingPlayer.classList.contains('hide')){
+        this.waitingPlayer.classList.toggle('hide');
+    }
+
+    this.startGame(mode, puzzle, liv);
+}
+
+// icone dei bonus originali del gioco: Atom the Point (punti extra) e Atom the Bomb (distrugge un'altra coppia)
+BONUS_ICON = {
+    point: 'https://latitanti.altervista.org/BG/img/atom-the-point.png',
+    bomb: 'https://latitanti.altervista.org/BG/img/atom-the-bomb.png',
+};
+
+startGame(mode, puzzle, liv){
+    this.currentMode = mode;
+    this.score = 0;
+    this.selectedButton = null;
+    this.remainingPairs = puzzle.length / 2;
+    this.startTime = Date.now();
+    this.buttonArea.innerHTML = '';
+    this.gameLevelEl.innerText = mode === '1vs1' ? '1 VS 1' : `LIVELLO ${liv || 1}`;
+    this.updateScoreboard();
+
+    puzzle.forEach((value, index) => {
+        const btn = document.createElement('button');
+        const isBonus = value === 'bomb' || value === 'point';
+        btn.className = 'buttonGame effettoCiakka' + (isBonus ? ` bonus bonus-${value}` : '');
+        btn.dataset.value = value;
+        btn.dataset.index = index;
+
+        if(isBonus){
+            const img = document.createElement('img');
+            img.src = this.BONUS_ICON[value];
+            img.className = 'bonusImg';
+            btn.appendChild(img);
+        } else {
+            // bottoni con lo stesso numero hanno lo stesso colore
+            btn.style.backgroundColor = `hsl(${(value * 47) % 360}, 65%, 45%)`;
+            const numero = document.createElement('span');
+            numero.className = 'numero';
+            numero.innerText = value;
+            btn.appendChild(numero);
+        }
+
+        btn.onclick = () => this.onButtonClick(btn);
+        this.buttonArea.appendChild(btn);
+    });
+
+    this.openPag('gameArea');
+}
+
+onButtonClick(btn){
+    if(btn.disabled || btn === this.selectedButton) return;
+
+    if(!this.selectedButton){
+        this.selectedButton = btn;
+        btn.classList.add('selected');
+        return;
+    }
+
+    const first = this.selectedButton;
+    this.selectedButton = null;
+
+    if(first.dataset.value === btn.dataset.value){
+        first.classList.remove('selected');
+        first.classList.add('matched');
+        btn.classList.add('matched');
+        first.disabled = true;
+        btn.disabled = true;
+
+        this.score += 10;
+        this.remainingPairs -= 1;
+
+        if(first.dataset.value === 'point'){
+            this.score += 50;
+            this.showBonusMessage('Atom the Point: +50 punti extra!');
+        } else if(first.dataset.value === 'bomb'){
+            this.showBonusMessage('Atom the Bomb: distrutta un\'altra coppia!');
+            this.destroyRandomPair();
+        }
+
+        this.updateScoreboard();
+
+        if(this.remainingPairs <= 0){
+            this.socket.emit('game over', { score: this.score });
+        }
+    } else {
+        btn.classList.add('wrong');
+        setTimeout(() => {
+            first.classList.remove('selected');
+            btn.classList.remove('wrong');
+        }, 400);
+    }
+}
+
+// simula l'esplosione di Atom the Bomb: distrugge un'altra coppia scelta a caso tra quelle rimaste
+destroyRandomPair(){
+    const remaining = Array.from(this.buttonArea.querySelectorAll('.buttonGame:not(:disabled)'))
+        .filter(b => b.dataset.value !== 'bomb' && b.dataset.value !== 'point');
+    if(remaining.length < 2) return;
+
+    const value = remaining[Math.floor(Math.random() * remaining.length)].dataset.value;
+    const pairEls = remaining.filter(b => b.dataset.value === value);
+    if(pairEls.length < 2) return;
+
+    pairEls.slice(0, 2).forEach(b => {
+        b.classList.add('matched');
+        b.disabled = true;
+    });
+
+    this.score += 10;
+    this.remainingPairs -= 1;
+}
+
+showBonusMessage(text){
+    if(!this.gameBonusMsgEl) return;
+    this.gameBonusMsgEl.innerText = text;
+    clearTimeout(this.bonusMsgTimeout);
+    this.bonusMsgTimeout = setTimeout(() => { this.gameBonusMsgEl.innerText = ''; }, 2000);
+}
+
+updateScoreboard(){
+    this.gameScoreEl.innerText = `Punteggio: ${this.score}`;
+    this.gameRemainingEl.innerText = `NUMERI RIMASTI: ${this.remainingPairs}`;
+}
+
+onGameOverAck({ score, elapsedMs, topScores }){
+    alert(`Partita finita! Punteggio: ${score} in ${(elapsedMs/1000).toFixed(1)}s`);
+    this.renderStats(topScores);
+}
+
+onGameResult({ result, reason }){
+    if(result === 'win'){
+        alert(reason === 'opponent-disconnected' ? 'Hai vinto! Il tuo avversario si è disconnesso.' : 'Hai vinto!');
+    } else {
+        alert('Hai perso, riprova!');
+    }
+}
+
+renderStats(rows){
+    if(!rows || !this.statsListEl) return;
+    this.statsListEl.innerHTML = rows
+        .map((r, i) => `<li>${i + 1}. ${r.nickname} - ${r.score} pt (${r.mode})</li>`)
+        .join('');
+}
 
 }
 
