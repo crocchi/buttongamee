@@ -17,9 +17,9 @@ function shuffle(array) {
     return array;
 }
 
-// più si sale di livello più bottoni ci sono (difficoltà crescente), fino a un tetto massimo
+// Ogni livello aggiunge esattamente cinque tessere: 5, 10, 15 ... fino a 500.
 function numButtonsForLevel(liv) {
-    return Math.min(12 + Math.floor((Math.max(1, liv) - 1) / 2) * 2, 30);
+    return Math.min(MAX_LEVEL, Math.max(1, Number(liv) || 1)) * 5;
 }
 
 function levelConfig(liv) {
@@ -42,7 +42,11 @@ function levelConfig(liv) {
         shuffleOnMismatch: world >= 6,
         matchRule: world >= 7 ? 'sum10' : 'equal',
         noColor: world >= 8,
-        targetMs: Math.max(30000, 95000 - world * 5000 - (level % 10) * 1500),
+        selectionMs: Math.max(1000, 4000 - (level - 1) * 30),
+        maxSelections: 4,
+        // Il tempo totale cresce con la quantità di tessere; il timer della singola
+        // selezione, invece, diventa progressivamente più rapido.
+        targetMs: Math.max(60000, numButtonsForLevel(level) * 1600),
     };
 }
 
@@ -50,7 +54,8 @@ function levelConfig(liv) {
 // se ci sono abbastanza coppie, due di esse diventano i bonus speciali del gioco originale:
 // 'point' (Atom the Point: punti extra) e 'bomb' (Atom the Bomb: distrugge un'altra coppia a caso)
 function generatePuzzle(numButtons, matchRule = 'equal') {
-    const pairs = Math.max(2, Math.floor((numButtons || 20) / 2));
+    const count = Math.max(2, Math.floor(Number(numButtons) || 20));
+    const pairs = Math.floor(count / 2);
     const values = [];
     for (let v = 1; v <= pairs; v++) {
         if (matchRule === 'sum10') {
@@ -64,12 +69,33 @@ function generatePuzzle(numButtons, matchRule = 'equal') {
         values[0] = 'point'; values[1] = 'point';
         values[2] = 'bomb'; values[3] = 'bomb';
     }
+    // Nei livelli con un numero dispari di tessere rimane volutamente un numero
+    // senza coppia: non impedisce il completamento del livello.
+    if (count % 2) values.push(1000 + count);
     return shuffle(values);
 }
 
 function valuesMatch(first, second, rule) {
     if (first === 'point' || first === 'bomb') return first === second;
     return rule === 'sum10' ? Number(first) + Number(second) === 10 : first === second;
+}
+
+function hasRemainingMatch(puzzle, matched, rule) {
+    const counts = new Map();
+    puzzle.forEach((value, index) => {
+        if (!matched.has(index)) counts.set(value, (counts.get(value) || 0) + 1);
+    });
+    for (const [value, count] of counts) {
+        if (value === 'point' || value === 'bomb') {
+            if (count >= 2) return true;
+        } else if (rule === 'sum10') {
+            const complement = 10 - Number(value);
+            if (complement === Number(value) ? count >= 2 : counts.has(complement)) return true;
+        } else if (count >= 2) {
+            return true;
+        }
+    }
+    return false;
 }
 
 function lockedIndicesForPuzzle(puzzle, count) {
@@ -87,6 +113,21 @@ function normalizeNickname(value) {
 
 module.exports = (io, main) => {
 
+    const clearSelectionTimers = function (game) {
+        if (!game || !game.selections) return;
+        for (const timer of game.selections.values()) clearTimeout(timer);
+        game.selections.clear();
+    };
+
+    const clearSelectedIndices = function (game, indices) {
+        if (!game || !game.selections) return;
+        indices.forEach(index => {
+            const timer = game.selections.get(index);
+            if (timer) clearTimeout(timer);
+            game.selections.delete(index);
+        });
+    };
+
     const clearCampaignDeadline = function (game) {
         if (game && game.deadlineTimer) {
             clearTimeout(game.deadlineTimer);
@@ -98,6 +139,7 @@ module.exports = (io, main) => {
         if (!game || game.finishing || socket.data.game !== game) return;
         game.finishing = true;
         clearCampaignDeadline(game);
+        clearSelectionTimers(game);
 
         const score = (game.totalScore || 0) + (game.levelScore || 0);
         const elapsedMs = Date.now() - game.campaignStartTime + game.totalPenaltyMs;
@@ -133,6 +175,7 @@ module.exports = (io, main) => {
     const gameStart = function (liv) {
         const socket = this;
         clearCampaignDeadline(socket.data.game);
+        clearSelectionTimers(socket.data.game);
         removeFromWaitingQueue(socket);
         const definition = levelDefinition(1);
         const now = Date.now();
@@ -228,6 +271,9 @@ module.exports = (io, main) => {
         const socket = this;
         if (action !== 'join') return;
 
+        clearCampaignDeadline(socket.data.game);
+        clearSelectionTimers(socket.data.game);
+
         if (socket.data.game && socket.data.game.mode === 'match3-1vs1') return;
         if (waitingQueue.includes(socket)) {
             io.to(socket.id).emit('gameSet', { mode: '1vs1-wait', data: 'In attesa di un avversario...' });
@@ -318,12 +364,21 @@ module.exports = (io, main) => {
         const socket = this;
         removeFromWaitingQueue(socket);
         clearCampaignDeadline(socket.data.game);
-        const puzzle = generatePuzzle(20);
+        clearSelectionTimers(socket.data.game);
+        const config = levelConfig(1);
+        const puzzle = generatePuzzle(config.numButtons, config.matchRule);
+        const lockedIndices = lockedIndicesForPuzzle(puzzle, config.lockedCount);
+        const now = Date.now();
         socket.data.game = {
-            mode: 'pairs', puzzle, matched: new Set(), pending: null,
-            score: 0, errors: 0, startTime: Date.now(), finishing: false,
+            mode: 'campain', puzzle, liv: 1, totalScore: 0, levelScore: 0,
+            startTime: now, campaignStartTime: now, matched: new Set(), selections: new Map(),
+            finishing: false, levelPenaltyMs: 0, totalPenaltyMs: 0, errors: 0,
+            combo: 0, config, locked: new Set(lockedIndices),
         };
-        socket.emit('gameSet', { mode: 'pairs', puzzle, elapsedMs: 0 });
+        socket.emit('gameSet', {
+            mode: 'campain', puzzle, liv: 1, elapsedMs: 0, config, lockedIndices,
+        });
+        setCampaignDeadline(socket, socket.data.game);
     };
 
     const pairOnline1vs1 = function (action) {
@@ -331,6 +386,8 @@ module.exports = (io, main) => {
         if (action !== 'join') return;
         if (socket.data.game && socket.data.game.mode === 'pairs-1vs1') return;
 
+        clearCampaignDeadline(socket.data.game);
+        clearSelectionTimers(socket.data.game);
         removeFromWaitingQueue(socket);
         if (pairsWaitingQueue.includes(socket)) {
             socket.emit('gameSet', { mode: 'pairs-1vs1-wait', data: 'In attesa di un avversario...' });
@@ -351,7 +408,7 @@ module.exports = (io, main) => {
         const roomId = `pairs-room-${opponent.id}-${socket.id}`;
         socket.join(roomId);
         opponent.join(roomId);
-        const puzzle = generatePuzzle(24);
+        const puzzle = generatePuzzle(200);
         const gameState = {
             mode: 'pairs-1vs1', puzzle, matched: new Set(), selections: new Map(),
             scores: new Map([[socket.id, 0], [opponent.id, 0]]),
@@ -509,6 +566,7 @@ module.exports = (io, main) => {
         if (game.finishing || socket.data.game !== game) return;
         game.finishing = true;
         clearCampaignDeadline(game);
+        clearSelectionTimers(game);
 
         const levelElapsedMs = Date.now() - game.startTime + game.levelPenaltyMs;
         const elapsedMs = Date.now() - game.campaignStartTime + game.totalPenaltyMs;
@@ -539,7 +597,7 @@ module.exports = (io, main) => {
         socket.data.game = {
             mode: 'campain', puzzle: nextPuzzle, liv: nextLiv, totalScore, levelScore: 0,
             startTime: Date.now(), campaignStartTime: game.campaignStartTime,
-            matched: new Set(), pending: null, finishing: false,
+            matched: new Set(), selections: new Map(), finishing: false,
             levelPenaltyMs: 0, totalPenaltyMs: game.totalPenaltyMs, errors: 0, combo: 0, config,
             locked: new Set(lockedIndices),
         };
@@ -556,29 +614,39 @@ module.exports = (io, main) => {
     };
 
     const handleCampaignClick = function (socket, game, index) {
-        if (game.matched.has(index) || game.pending === index || game.locked.has(index)) return;
-        if (game.pending === null) {
-            game.pending = index;
-            socket.emit('buttonSelected', { index, by: socket.id });
+        if (game.matched.has(index) || game.selections.has(index) || game.locked.has(index)) return;
+        if (game.selections.size >= game.config.maxSelections) {
+            socket.emit('selectionLimit', { max: game.config.maxSelections });
             return;
         }
 
-        const pending = game.pending;
-        game.pending = null;
-        const value = game.puzzle[pending];
-        if (!valuesMatch(value, game.puzzle[index], game.config.matchRule)) {
+        const selectionTimer = setTimeout(() => {
+            if (socket.data.game !== game || game.finishing || !game.selections.has(index)) return;
+            game.selections.delete(index);
             game.errors += 1;
             game.combo = 0;
             game.levelPenaltyMs += game.config.penaltyMs;
             game.totalPenaltyMs += game.config.penaltyMs;
-            socket.emit('pairMismatch', {
-                indices: [pending, index], penaltyMs: game.config.penaltyMs,
-                errors: game.errors, shuffle: game.config.shuffleOnMismatch,
+            socket.emit('selectionExpired', {
+                index, errors: game.errors, penaltyMs: game.config.penaltyMs,
+                shuffle: game.config.shuffleOnMismatch,
             });
-            setCampaignDeadline(socket, game);
-            return;
-        }
+            if (game.config.penaltyMs) setCampaignDeadline(socket, game);
+        }, game.config.selectionMs);
+        if (typeof selectionTimer.unref === 'function') selectionTimer.unref();
+        game.selections.set(index, selectionTimer);
+        socket.emit('buttonSelected', {
+            index, by: socket.id, expiresInMs: game.config.selectionMs,
+            selectedCount: game.selections.size, maxSelections: game.config.maxSelections,
+        });
 
+        const pending = Array.from(game.selections.keys()).find(otherIndex =>
+            otherIndex !== index && valuesMatch(game.puzzle[otherIndex], game.puzzle[index], game.config.matchRule)
+        );
+        if (pending === undefined) return;
+
+        clearSelectedIndices(game, [pending, index]);
+        const value = game.puzzle[pending];
         game.matched.add(pending);
         game.matched.add(index);
         game.combo += 1;
@@ -597,6 +665,7 @@ module.exports = (io, main) => {
             const candidates = Array.from(pairs.values()).filter(pair => pair.length >= 2);
             if (candidates.length) {
                 const chosen = candidates[Math.floor(Math.random() * candidates.length)].slice(0, 2);
+                clearSelectedIndices(game, chosen);
                 chosen.forEach(i => game.matched.add(i));
                 extraIndices.push(...chosen);
                 points += 10 * multiplier;
@@ -613,7 +682,11 @@ module.exports = (io, main) => {
             game.locked.clear();
             socket.emit('unlockButtons', { indices: unlockedIndices });
         }
-        if (game.matched.size >= game.puzzle.length) void finishCampaignLevel(socket, game);
+        // Una tessera senza coppia può restare scoperta: il livello termina quando
+        // non esistono più abbinamenti possibili tra le tessere rimaste.
+        if (!hasRemainingMatch(game.puzzle, game.matched, game.config.matchRule)) {
+            void finishCampaignLevel(socket, game);
+        }
     };
 
     // Evento mantenuto per client vecchi: non accetta né salva più punteggi forniti dal browser.
@@ -623,6 +696,7 @@ module.exports = (io, main) => {
         const socket = this;
         removeFromWaitingQueue(socket);
         clearCampaignDeadline(socket.data.game);
+        clearSelectionTimers(socket.data.game);
 
         const game = socket.data.game;
         if (game && ['match3-1vs1', 'pairs-1vs1'].includes(game.mode) && game.roomId && !game.decided) {
@@ -657,6 +731,7 @@ module.exports = (io, main) => {
         const socket = this;
         removeFromWaitingQueue(socket);
         clearCampaignDeadline(socket.data.game);
+        clearSelectionTimers(socket.data.game);
         const { puzzle, solution } = createSudoku(42);
         socket.data.game = {
             mode: 'sudoku', board: puzzle.map(row => [...row]), solution,
@@ -726,5 +801,6 @@ module.exports = (io, main) => {
 };
 
 module.exports._test = {
-    levelConfig, generatePuzzle, valuesMatch, lockedIndicesForPuzzle, normalizeNickname, MAX_LEVEL,
+    levelConfig, generatePuzzle, valuesMatch, hasRemainingMatch,
+    lockedIndicesForPuzzle, normalizeNickname, MAX_LEVEL,
 };

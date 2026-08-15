@@ -57,6 +57,14 @@ test('la campagna definisce dieci mondi fino al livello 100', () => {
     assert.equal(levelConfig(70).matchRule, 'sum10');
     assert.equal(levelConfig(80).noColor, true);
     assert.equal(levelConfig(100).boss, true);
+    assert.equal(levelConfig(1).numButtons, 5);
+    assert.equal(levelConfig(2).numButtons, 10);
+    assert.equal(levelConfig(3).numButtons, 15);
+    assert.equal(levelConfig(50).numButtons, 250);
+    assert.equal(levelConfig(100).numButtons, 500);
+    assert.equal(levelConfig(1).selectionMs, 4000);
+    assert.equal(levelConfig(100).selectionMs, 1030);
+    assert.equal(levelConfig(100).maxSelections, 4);
 });
 
 test('il nome classifica viene normalizzato e validato', () => {
@@ -80,12 +88,30 @@ test('i livelli somma 10 generano soltanto coppie compatibili', () => {
     }
 });
 
-test('la modalità Coppie crea 20 tessere e valida gli abbinamenti sul server', () => {
+test('un puzzle dispari mantiene una tessera senza coppia e può comunque terminare', () => {
+    const { generatePuzzle, hasRemainingMatch } = require('../event/game')._test;
+    const puzzle = generatePuzzle(5, 'equal');
+    assert.equal(puzzle.length, 5);
+
+    const counts = new Map();
+    puzzle.forEach(value => counts.set(value, (counts.get(value) || 0) + 1));
+    assert.equal(Array.from(counts.values()).filter(count => count === 1).length, 1);
+
+    const matched = new Set();
+    for (const [value, count] of counts) {
+        if (count < 2) continue;
+        puzzle.forEach((item, index) => { if (item === value) matched.add(index); });
+    }
+    assert.equal(hasRemainingMatch(puzzle, matched, 'equal'), false);
+});
+
+test('la campagna Coppie parte dal livello 1 e valida gli abbinamenti sul server', () => {
     const { socket, emitted, handlers } = makeHarness('pairs-player');
     handlers.pairStart.call(socket);
 
-    assert.equal(socket.data.game.mode, 'pairs');
-    assert.equal(socket.data.game.puzzle.length, 20);
+    assert.equal(socket.data.game.mode, 'campain');
+    assert.equal(socket.data.game.liv, 1);
+    assert.equal(socket.data.game.puzzle.length, 5);
 
     const firstIndex = socket.data.game.puzzle.findIndex(value =>
         socket.data.game.puzzle.filter(item => item === value).length === 2
@@ -99,6 +125,32 @@ test('la modalità Coppie crea 20 tessere e valida gli abbinamenti sul server', 
     assert.equal(socket.data.game.matched.has(firstIndex), true);
     assert.equal(socket.data.game.matched.has(secondIndex), true);
     assert.equal(emitted.some(({ event }) => event === 'pairMatched'), true);
+});
+
+test('la campagna permette fino a quattro tessere aperte contemporaneamente', () => {
+    const { socket, emitted, handlers } = makeHarness('multi-select-player');
+    const { generatePuzzle } = require('../event/game')._test;
+    handlers.pairStart.call(socket);
+    socket.data.game.puzzle = generatePuzzle(10, 'equal');
+
+    const distinctIndices = [];
+    const seen = new Set();
+    socket.data.game.puzzle.forEach((value, index) => {
+        if (!seen.has(value)) {
+            seen.add(value);
+            distinctIndices.push(index);
+        }
+    });
+    distinctIndices.slice(0, 4).forEach(index => handlers.gameClick.call(socket, { index }));
+    assert.equal(socket.data.game.selections.size, 4);
+
+    handlers.gameClick.call(socket, { index: distinctIndices[4] });
+    assert.equal(socket.data.game.selections.size, 4);
+    assert.equal(emitted.some(({ event }) => event === 'selectionLimit'), true);
+    assert.equal(
+        emitted.filter(({ event }) => event === 'buttonSelected').every(({ payload }) => payload.expiresInMs === 4000),
+        true
+    );
 });
 
 test('Coppie 1vs1 abbina due giocatori su una griglia condivisa', () => {
@@ -135,7 +187,8 @@ test('Coppie 1vs1 abbina due giocatori su una griglia condivisa', () => {
 
     assert.equal(first.data.game, second.data.game);
     assert.equal(first.data.game.mode, 'pairs-1vs1');
-    assert.equal(first.data.game.puzzle.length, 24);
+    assert.equal(first.data.game.puzzle.length, 200);
+    assert.equal(first.data.game.puzzle.length / 2, 100);
     assert.equal(first.data.game.scores.size, 2);
     assert.equal(emitted.filter(({ event }) => event === 'gameSet').some(({ payload }) => payload.mode === 'pairs-1vs1'), true);
 });

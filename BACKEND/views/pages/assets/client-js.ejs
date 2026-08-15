@@ -285,6 +285,8 @@ bindGameEvents(){
     this.socket.on('buttonSelected', (payload) => this.onButtonSelected(payload));
     this.socket.on('pairMatched', (payload) => this.onPairMatched(payload));
     this.socket.on('pairMismatch', (payload) => this.onPairMismatch(payload));
+    this.socket.on('selectionExpired', (payload) => this.onSelectionExpired(payload));
+    this.socket.on('selectionLimit', ({ max }) => this.showBonusMessage(`Puoi aprire al massimo ${max} tessere insieme`));
     this.socket.on('unlockButtons', (payload) => this.onUnlockButtons(payload));
     this.socket.on('nicknameResult', (payload) => this.onNicknameResult(payload));
     this.socket.on('match3State', (payload) => this.onMatch3State(payload));
@@ -649,7 +651,7 @@ startGame(mode, puzzle, liv, elapsedMs = 0, config = null, lockedIndices = []){
     this.currentConfig = config;
     this.score = 0;
     this.selectedButton = null;
-    this.remainingPairs = puzzle.length / 2;
+    this.remainingPairs = Math.floor(puzzle.length / 2);
     this.my1v1Score = 0;
     this.opp1v1Score = 0;
     this.errors = 0;
@@ -658,13 +660,15 @@ startGame(mode, puzzle, liv, elapsedMs = 0, config = null, lockedIndices = []){
     this.levelStartTime = Date.now();
     this.startTimer(elapsedMs);
     this.buttonArea.className = '';
+    if(mode === 'pairs-1vs1') this.buttonArea.classList.add('pairs-marathon');
+    if(mode === 'campain' && puzzle.length > 80) this.buttonArea.classList.add('large-pairs-board');
     this.buttonArea.style.removeProperty('--board-size');
     this.buttonArea.innerHTML = '';
     this.gameLevelEl.innerText = mode === 'pairs'
         ? 'COPPIE DI NUMERI · SINGLE PLAYER'
         : (mode === 'pairs-1vs1'
             ? 'COPPIE DI NUMERI · 1 VS 1'
-            : `MONDO ${config ? config.world : 1} · LIVELLO ${liv || 1}${config && config.boss ? ' · BOSS' : ''}`);
+            : `COPPIE DI NUMERI · MONDO ${config ? config.world : 1} · LIVELLO ${liv || 1}/100${config && config.boss ? ' · BOSS' : ''}`);
     this.renderMission();
     this.updateScoreboard();
 
@@ -720,11 +724,12 @@ renderMission(){
         return;
     }
     if(this.currentMode === 'pairs-1vs1'){
-        this.gameMissionEl.textContent = 'Griglia condivisa: trova più coppie e totalizza più punti del tuo avversario';
+        this.gameMissionEl.textContent = '100 coppie condivise: trova più abbinamenti e totalizza più punti del tuo avversario';
         return;
     }
     const config = this.currentConfig || {};
     const rules = [config.matchRule === 'sum10' ? 'Abbina numeri con somma 10' : 'Abbina numeri uguali'];
+    if(config.selectionMs) rules.push(`fino a ${config.maxSelections || 4} tessere aperte per ${(config.selectionMs / 1000).toFixed(2)}s`);
     if(config.hidden) rules.push(`memorizza in ${(config.previewMs / 1000).toFixed(1)}s`);
     if(config.exposedCount) rules.push(`${config.exposedCount} tessere restano scoperte`);
     if(config.targetMs) rules.push(`tempo massimo ${Math.round(config.targetMs / 1000)}s`);
@@ -762,12 +767,18 @@ onButtonClick1vs1(btn){
 }
 
 // un giocatore (io o l'avversario) ha selezionato un bottone: lo blocco per entrambi finché non si risolve
-onButtonSelected({ index, by }){
+onButtonSelected({ index, by, expiresInMs = 0 }){
     const btn = this.getGameButton(index);
     if(!btn) return;
     btn.disabled = true;
     btn.classList.remove('concealed');
     btn.classList.add(by === this.socket.id ? 'selected' : 'locked');
+    if(expiresInMs){
+        btn.style.setProperty('--selection-ms', `${expiresInMs}ms`);
+        btn.classList.remove('timed-selection');
+        void btn.offsetWidth;
+        btn.classList.add('timed-selection');
+    }
 }
 
 onPairMatched({ indices, extraIndices, by, bonus, points, combo = 0, multiplier = 1 }){
@@ -778,7 +789,7 @@ onPairMatched({ indices, extraIndices, by, bonus, points, combo = 0, multiplier 
     const buttons = [...indices, ...(extraIndices || [])]
         .map(i => this.getGameButton(i))
         .filter(Boolean);
-    buttons.forEach(b => { b.disabled = true; b.classList.remove('selected', 'locked', 'concealed'); });
+    buttons.forEach(b => { b.disabled = true; b.classList.remove('selected', 'locked', 'concealed', 'timed-selection'); });
     this.popButtons(...buttons);
 
     if(bonus === 'point') this.showBonusMessage('Atom the Point: +50 punti extra!');
@@ -794,6 +805,28 @@ onPairMatched({ indices, extraIndices, by, bonus, points, combo = 0, multiplier 
         if(multiplier > 1) this.showBonusMessage(`COMBO ×${multiplier}: +${points} punti!`);
     }
     this.updateScoreboard();
+}
+
+onSelectionExpired({ index, penaltyMs = 0, errors, shuffle = false }){
+    const btn = this.getGameButton(index);
+    if(!btn) return;
+    sfx.wrong();
+    this.combo = 0;
+    this.errors = errors || this.errors + 1;
+    if(penaltyMs){
+        this.startTime -= penaltyMs;
+        this.levelStartTime -= penaltyMs;
+        this.showBonusMessage(`Tempo tessera scaduto: +${penaltyMs / 1000} secondi`);
+    }
+    this.updateScoreboard();
+    btn.classList.remove('timed-selection', 'selected', 'locked');
+    btn.classList.add('selection-expired');
+    setTimeout(() => {
+        btn.classList.remove('selection-expired');
+        if(this.currentConfig && this.currentConfig.hidden) btn.classList.add('concealed');
+        btn.disabled = false;
+    }, 280);
+    if(shuffle) setTimeout(() => this.shuffleVisibleButtons(), 300);
 }
 
 onPairMismatch({ indices, penaltyMs = 0, errors, shuffle = false }){

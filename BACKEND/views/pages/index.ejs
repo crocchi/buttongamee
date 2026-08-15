@@ -103,18 +103,14 @@
         <br>
         <div class="modal-body">
                 
-        <div onclick="playStart(1)" class="contact">
+        <div onclick="toggleNumberBlastModes(event)" class="contact game-mode-card" id="numberBlastGameCard">
             <img class="pic imgPlaygame" src="https://latitanti.altervista.org/BG/img/png.png" ></img>
             <h2>NUMBER BLAST</h2>
-         </div>
-
-        <div onclick="playStart1vs1()" class="contact">
-            <img class="pic imgPlaygame" src="https://latitanti.altervista.org/BG/img/png2.png" ></img>
-            <h2>NUMBER BLAST 1 VS 1</h2>
-            <div id='waitingplayer' class="hide">
-            <i class="fa-solid fa-hourglass-start ">
-                <p id='waitingplayerText'> </p>
-            </i>
+            <p class="mode-hint">Scegli come giocare</p>
+            <div id="numberBlastModeSelector" class="mode-selector hide">
+                <button type="button" onclick="playStart(1, event)"><span class="fa-solid fa-user"></span> SINGLE PLAYER</button>
+                <button type="button" onclick="playStart1vs1(event)"><span class="fa-solid fa-user-group"></span> 1 VS 1</button>
+                <div id="waitingplayer" class="waiting-mode hide"><span class="fa-solid fa-hourglass-start"></span> <span id="waitingplayerText"></span></div>
             </div>
         </div>
 
@@ -192,13 +188,26 @@
           <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" integrity="sha384-mZLF4UVrpi/QTWPA7BjNPEnkIfRFn4ZEO3Qt/HFklTJBj/gBOV8G3HcKn4NfQblz" crossorigin="anonymous"></script>
 		<script>
 			
-            let playStart = (liv)=>{
+            let toggleNumberBlastModes = (event)=>{
+            event.stopPropagation();
+            const selector = document.getElementById('numberBlastModeSelector');
+            const pairsSelector = document.getElementById('pairsModeSelector');
+            pairsSelector.classList.add('hide');
+            document.getElementById('pairsGameCard').classList.remove('expanded');
+            selector.classList.toggle('hide');
+            document.getElementById('numberBlastGameCard').classList.toggle('expanded', !selector.classList.contains('hide'));
+            }
+
+            let playStart = (liv, event)=>{
+            if(event) event.stopPropagation();
             user.socket.emit('game start',liv );// il numero di bottoni aumenta automaticamente col livello
             }
 
-        let playStart1vs1 = ()=>{
+        let playStart1vs1 = (event)=>{
+            if(event) event.stopPropagation();
             console.log("invio richiesta al server [ 1 versus 1 ] ")
             user.socket.emit('gameOnline 1vs1','join' );
+            document.getElementById('waitingplayer').classList.remove('hide');
             document.getElementById('waitingplayerText').innerText=' Invio richiesta al server...';
             }
 
@@ -209,6 +218,9 @@
         let togglePairsModes = (event)=>{
             event.stopPropagation();
             const selector = document.getElementById('pairsModeSelector');
+            const numberBlastSelector = document.getElementById('numberBlastModeSelector');
+            numberBlastSelector.classList.add('hide');
+            document.getElementById('numberBlastGameCard').classList.remove('expanded');
             selector.classList.toggle('hide');
             document.getElementById('pairsGameCard').classList.toggle('expanded', !selector.classList.contains('hide'));
         }
