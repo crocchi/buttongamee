@@ -8,7 +8,7 @@ services:
       MYSQL_USER: buttongame
       MYSQL_PASSWORD: buttongame
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -23,6 +23,7 @@ services:
     restart: unless-stopped
     environment:
       PORT: 8000
+      NODE_ENV: development
       SESSION_SECRET: dev-secret-change-me
       DB_HOST: mysql
       DB_PORT: 3306

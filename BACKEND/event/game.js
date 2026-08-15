@@ -39,9 +39,14 @@ module.exports = (io, main) => {
 
     const gameStart = function (liv) {
         const socket = this;
-        const startLiv = liv || 1;
+        removeFromWaitingQueue(socket);
+        const requestedLevel = Number(liv);
+        const startLiv = Number.isInteger(requestedLevel) && requestedLevel === 1 ? requestedLevel : 1;
         const puzzle = generatePuzzle(numButtonsForLevel(startLiv));
-        socket.data.game = { mode: 'campain', puzzle, liv: startLiv, totalScore: 0, startTime: Date.now() };
+        socket.data.game = {
+            mode: 'campain', puzzle, liv: startLiv, totalScore: 0, levelScore: 0,
+            startTime: Date.now(), matched: new Set(), pending: null, finishing: false,
+        };
         io.to(socket.id).emit('gameSet', { mode: 'campain', puzzle, liv: startLiv });
     };
 
@@ -49,8 +54,18 @@ module.exports = (io, main) => {
         const socket = this;
         if (action !== 'join') return;
 
-        const opponent = waitingQueue.shift();
-        if (!opponent || !opponent.connected) {
+        if (socket.data.game && socket.data.game.mode === '1vs1') return;
+        if (waitingQueue.includes(socket)) {
+            io.to(socket.id).emit('gameSet', { mode: '1vs1-wait', data: 'In attesa di un avversario...' });
+            return;
+        }
+
+        let opponent;
+        while (waitingQueue.length && !opponent) {
+            const candidate = waitingQueue.shift();
+            if (candidate !== socket && candidate.connected && !candidate.data.game) opponent = candidate;
+        }
+        if (!opponent) {
             waitingQueue.push(socket);
             io.to(socket.id).emit('gameSet', { mode: '1vs1-wait', data: 'In attesa di un avversario...' });
             return;
@@ -116,10 +131,16 @@ module.exports = (io, main) => {
     const gameClick = function (payload) {
         const socket = this;
         const game = socket.data.game;
-        if (!game || game.mode !== '1vs1' || game.decided) return;
+        if (!game || game.decided || game.finishing) return;
 
         const index = Number(payload && payload.index);
         if (!Number.isInteger(index) || index < 0 || index >= game.puzzle.length) return;
+
+        if (game.mode === 'campain') {
+            handleCampaignClick(socket, game, index);
+            return;
+        }
+        if (game.mode !== '1vs1') return;
         if (game.matched.has(index)) return;
 
         // già selezionato (da questo o dall'altro giocatore): non selezionabile
@@ -184,13 +205,12 @@ module.exports = (io, main) => {
         }
     };
 
-    const gameOver = async function (payload) {
-        const socket = this;
-        const game = socket.data.game;
-        if (!game || game.mode !== 'campain') return;
+    const finishCampaignLevel = async function (socket, game) {
+        if (game.finishing || socket.data.game !== game) return;
+        game.finishing = true;
 
         const elapsedMs = Date.now() - game.startTime;
-        const score = Math.max(0, Number(payload && payload.score) || 0);
+        const score = game.levelScore;
 
         try {
             await saveScore({ nickname: socket.data.username, mode: game.mode, score, elapsedMs, level: game.liv || 1 });
@@ -203,14 +223,19 @@ module.exports = (io, main) => {
         const nextLiv = (game.liv || 1) + 1;
 
         if (nextLiv > MAX_LEVEL) {
-            const topScores = await getTopScores();
+            let topScores = [];
+            try { topScores = await getTopScores(); }
+            catch (e) { console.error('Errore lettura classifica:', e.message); }
             io.to(socket.id).emit('gameOverAck', { score: totalScore, elapsedMs, topScores, liv: game.liv });
             socket.data.game = null;
             return;
         }
 
         const nextPuzzle = generatePuzzle(numButtonsForLevel(nextLiv));
-        socket.data.game = { mode: 'campain', puzzle: nextPuzzle, liv: nextLiv, totalScore, startTime: Date.now() };
+        socket.data.game = {
+            mode: 'campain', puzzle: nextPuzzle, liv: nextLiv, totalScore, levelScore: 0,
+            startTime: Date.now(), matched: new Set(), pending: null, finishing: false,
+        };
         io.to(socket.id).emit('gameSet', {
             mode: 'campain',
             puzzle: nextPuzzle,
@@ -219,10 +244,55 @@ module.exports = (io, main) => {
         });
     };
 
+    const handleCampaignClick = function (socket, game, index) {
+        if (game.matched.has(index) || game.pending === index) return;
+        if (game.pending === null) {
+            game.pending = index;
+            socket.emit('buttonSelected', { index, by: socket.id });
+            return;
+        }
+
+        const pending = game.pending;
+        game.pending = null;
+        const value = game.puzzle[pending];
+        if (value !== game.puzzle[index]) {
+            socket.emit('pairMismatch', { indices: [pending, index] });
+            return;
+        }
+
+        game.matched.add(pending);
+        game.matched.add(index);
+        let points = value === 'point' ? 60 : 10;
+        const bonus = value === 'point' || value === 'bomb' ? value : null;
+        const extraIndices = [];
+
+        if (bonus === 'bomb') {
+            const pairs = new Map();
+            game.puzzle.forEach((v, i) => {
+                if (game.matched.has(i) || v === 'bomb' || v === 'point') return;
+                if (!pairs.has(v)) pairs.set(v, []);
+                pairs.get(v).push(i);
+            });
+            const candidates = Array.from(pairs.values()).filter(pair => pair.length >= 2);
+            if (candidates.length) {
+                const chosen = candidates[Math.floor(Math.random() * candidates.length)].slice(0, 2);
+                chosen.forEach(i => game.matched.add(i));
+                extraIndices.push(...chosen);
+                points += 10;
+            }
+        }
+
+        game.levelScore += points;
+        socket.emit('pairMatched', { indices: [pending, index], extraIndices, by: socket.id, bonus, points });
+        if (game.matched.size >= game.puzzle.length) void finishCampaignLevel(socket, game);
+    };
+
+    // Evento mantenuto per client vecchi: non accetta né salva più punteggi forniti dal browser.
+    const gameOver = function () {};
+
     const gameDisconnectCleanup = function () {
         const socket = this;
-        const idx = waitingQueue.indexOf(socket);
-        if (idx !== -1) waitingQueue.splice(idx, 1);
+        removeFromWaitingQueue(socket);
 
         const game = socket.data.game;
         if (game && game.mode === '1vs1' && game.roomId && !game.decided) {
@@ -234,6 +304,11 @@ module.exports = (io, main) => {
             if (opponentSocket) opponentSocket.data.game = null;
         }
     };
+
+    function removeFromWaitingQueue(socket) {
+        let idx;
+        while ((idx = waitingQueue.indexOf(socket)) !== -1) waitingQueue.splice(idx, 1);
+    }
 
     const statsRequest = async function () {
         const socket = this;

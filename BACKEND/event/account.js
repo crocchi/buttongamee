@@ -3,7 +3,6 @@ const userSign = function (socket) {
 
     socket.emit('setNick', {
         msg: socket.data.username,
-        session: socket.request.session.id,
     });
 };
 

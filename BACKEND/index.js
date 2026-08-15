@@ -10,10 +10,21 @@ const router = require('./routers');
 //DATABASE
 const { initDb } = require('./db/db');
 
+const isProduction = process.env.NODE_ENV === 'production';
+if (isProduction && !process.env.SESSION_SECRET) {
+    throw new Error('SESSION_SECRET deve essere configurato in produzione');
+}
+
 const sessionMiddleware = session({
-    secret: process.env.SESSION_SECRET || "scrocchi",
-    resave: true,
-    saveUninitialized: true,
+    secret: process.env.SESSION_SECRET || "dev-secret-change-me",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: isProduction,
+        maxAge: 24 * 60 * 60 * 1000,
+    },
   });
 
 class Main{
@@ -25,8 +36,11 @@ class Main{
         this.PORT = port || this.PORT;
 
         //CONF bodyparser
-        this.app.use(express.urlencoded({ extended: true }));
-        this.app.use(express.json());
+        this.app.use(express.urlencoded({ extended: true, limit: '32kb' }));
+        this.app.use(express.json({ limit: '32kb' }));
+
+        if (isProduction) this.app.set('trust proxy', 1);
+        this.app.disable('x-powered-by');
 
         //CONF CORS
         this.app.use(cors({ origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*' }));
@@ -43,16 +57,12 @@ class Main{
 
         //START HTTP SERVER
         this.server = http.createServer(this.app);
-        this.io = new Server(this.server);
+        const allowedOrigins = process.env.CORS_ORIGIN
+            ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
+            : '*';
+        this.io = new Server(this.server, { cors: { origin: allowedOrigins } });
         //share SESSION-EXPRESS IN SOCKET.IO ENGINE
         this.io.engine.use(sessionMiddleware);
-
-        // STARTING THE SERVER
-        this.server.listen(this.PORT);
-        console.log(`Server is listening on port ${this.PORT}`);
-
-        //DATABASE MYSQL - crea le tabelle se non esistono
-        initDb().catch(e => console.error('Errore inizializzazione DB:', e.message));
 
         const userSign = require("./event/account");
         const { gameStart, gameOnline1vs1, gameClick, gameOver, gameDisconnectCleanup, statsRequest } = require("./event/game")(this.io, this);
@@ -63,17 +73,27 @@ class Main{
             //IMPOSTA NOME USER E SESSION
             userSign(socket);
 
-            console.log(`${socket.data.username} join - SESSION ID: ${socket.request.session.id} `)
+            console.log(`${socket.data.username} join`)
 
             socket.on("disconnect", gameDisconnectCleanup);
             socket.on("game start", gameStart);
             socket.on("gameOnline 1vs1", gameOnline1vs1);
             socket.on("game click", gameClick);
-            socket.on("game over", gameOver);
+            socket.on("game over", gameOver); // compatibilità: il server ignora punteggi client
             socket.on("stats request", statsRequest);
           }
 
         this.io.on("connection", this.onConnection);
+
+        // Il servizio accetta traffico soltanto quando lo schema DB è pronto.
+        this.ready = initDb().then(() => new Promise((resolve, reject) => {
+            this.server.once('error', reject);
+            this.server.listen(this.PORT, () => {
+                this.server.removeListener('error', reject);
+                console.log(`Server is listening on port ${this.PORT}`);
+                resolve();
+            });
+        }));
     }  
 
     close() {

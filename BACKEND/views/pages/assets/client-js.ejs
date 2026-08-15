@@ -118,9 +118,8 @@ init(){
 
     this.socket.on("setNick", (data) => {
         console.log('ti è stato dato il nickName...'+data.msg);
-        this.infoUsername.innerHTML=`<p>USER: ${data.msg}</p> `
+        this.infoUsername.textContent = `USER: ${data.msg}`;
         localStorage.setItem("userName", data.msg);
-        localStorage.setItem("userSession", data.session);
       });
 
 }
@@ -325,11 +324,7 @@ getGameButton(index){
 }
 
 onButtonClick(btn){
-    if(this.currentMode === '1vs1'){
-        this.onButtonClick1vs1(btn);
-    } else {
-        this.onButtonClickCampaign(btn);
-    }
+    this.onButtonClick1vs1(btn);
 }
 
 // modalità 1vs1: il click viene solo inoltrato al server, che tiene il tabellone condiviso
@@ -337,53 +332,6 @@ onButtonClick(btn){
 onButtonClick1vs1(btn){
     if(btn.disabled) return;
     this.socket.emit('game click', { index: Number(btn.dataset.index) });
-}
-
-onButtonClickCampaign(btn){
-    if(btn.disabled || btn === this.selectedButton) return;
-
-    if(!this.selectedButton){
-        this.selectedButton = btn;
-        btn.classList.add('selected');
-        return;
-    }
-
-    const first = this.selectedButton;
-    this.selectedButton = null;
-
-    if(first.dataset.value === btn.dataset.value){
-        first.classList.remove('selected');
-        first.disabled = true;
-        btn.disabled = true;
-        this.popButtons(first, btn);
-        sfx.match();
-
-        this.score += 10;
-        this.remainingPairs -= 1;
-
-        if(first.dataset.value === 'point'){
-            this.score += 50;
-            sfx.point();
-            this.showBonusMessage('Atom the Point: +50 punti extra!');
-        } else if(first.dataset.value === 'bomb'){
-            sfx.bomb();
-            this.showBonusMessage('Atom the Bomb: distrutta un\'altra coppia!');
-            this.destroyRandomPair();
-        }
-
-        this.updateScoreboard();
-
-        if(this.remainingPairs <= 0){
-            this.socket.emit('game over', { score: this.score });
-        }
-    } else {
-        sfx.wrong();
-        btn.classList.add('wrong');
-        setTimeout(() => {
-            first.classList.remove('selected');
-            btn.classList.remove('wrong');
-        }, 400);
-    }
 }
 
 // un giocatore (io o l'avversario) ha selezionato un bottone: lo blocco per entrambi finché non si risolve
@@ -408,7 +356,12 @@ onPairMatched({ indices, extraIndices, by, bonus, points }){
     if(bonus === 'point') this.showBonusMessage('Atom the Point: +50 punti extra!');
     if(bonus === 'bomb') this.showBonusMessage('Atom the Bomb: distrutta un\'altra coppia!');
 
-    if(by === this.socket.id){ this.my1v1Score += points; } else { this.opp1v1Score += points; }
+    if(this.currentMode === '1vs1'){
+        if(by === this.socket.id){ this.my1v1Score += points; } else { this.opp1v1Score += points; }
+    } else {
+        this.score += points;
+        this.remainingPairs -= (indices.length + (extraIndices || []).length) / 2;
+    }
     this.updateScoreboard();
 }
 
@@ -459,23 +412,6 @@ animateReflow(removeFn){
     });
 }
 
-// simula l'esplosione di Atom the Bomb: distrugge un'altra coppia scelta a caso tra quelle rimaste
-destroyRandomPair(){
-    const remaining = Array.from(this.buttonArea.querySelectorAll('.buttonGame:not(:disabled)'))
-        .filter(b => b.dataset.value !== 'bomb' && b.dataset.value !== 'point');
-    if(remaining.length < 2) return;
-
-    const value = remaining[Math.floor(Math.random() * remaining.length)].dataset.value;
-    const pairEls = remaining.filter(b => b.dataset.value === value);
-    if(pairEls.length < 2) return;
-
-    pairEls.slice(0, 2).forEach(b => { b.disabled = true; });
-    this.popButtons(...pairEls.slice(0, 2));
-
-    this.score += 10;
-    this.remainingPairs -= 1;
-}
-
 showBonusMessage(text){
     if(!this.gameBonusMsgEl) return;
     this.gameBonusMsgEl.innerText = text;
@@ -518,9 +454,12 @@ onGameResult({ result, reason, score, opponentScore }){
 
 renderStats(rows){
     if(!rows || !this.statsListEl) return;
-    this.statsListEl.innerHTML = rows
-        .map((r, i) => `<li>${i + 1}. ${r.nickname} - ${r.score} pt (${r.mode})</li>`)
-        .join('');
+    this.statsListEl.replaceChildren();
+    rows.forEach((r, i) => {
+        const item = document.createElement('li');
+        item.textContent = `${i + 1}. ${r.nickname} - ${r.score} pt (${r.mode})`;
+        this.statsListEl.appendChild(item);
+    });
 }
 
 }
