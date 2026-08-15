@@ -3,12 +3,20 @@ const { saveScore, getTopScores } = require('../db/scoreModel');
 // giocatori in attesa di un avversario per la modalità 1vs1
 const waitingQueue = [];
 
+// livello massimo della campagna: oltre questo la partita finisce davvero
+const MAX_LEVEL = 6;
+
 function shuffle(array) {
     for (let i = array.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [array[i], array[j]] = [array[j], array[i]];
     }
     return array;
+}
+
+// più si sale di livello più bottoni ci sono (difficoltà crescente), fino a un tetto massimo
+function numButtonsForLevel(liv) {
+    return Math.min(12 + (Math.max(1, liv) - 1) * 4, 30);
 }
 
 // genera coppie di numeri uguali (es. num=20 -> 10 coppie, 20 bottoni)
@@ -29,11 +37,12 @@ function generatePuzzle(numButtons) {
 
 module.exports = (io, main) => {
 
-    const gameStart = function (liv, num) {
+    const gameStart = function (liv) {
         const socket = this;
-        const puzzle = generatePuzzle(num);
-        socket.data.game = { mode: 'campain', puzzle, liv, startTime: Date.now() };
-        io.to(socket.id).emit('gameSet', { mode: 'campain', puzzle, liv });
+        const startLiv = liv || 1;
+        const puzzle = generatePuzzle(numButtonsForLevel(startLiv));
+        socket.data.game = { mode: 'campain', puzzle, liv: startLiv, totalScore: 0, startTime: Date.now() };
+        io.to(socket.id).emit('gameSet', { mode: 'campain', puzzle, liv: startLiv });
     };
 
     const gameOnline1vs1 = function (action) {
@@ -69,7 +78,7 @@ module.exports = (io, main) => {
         const score = Math.max(0, Number(payload && payload.score) || 0);
 
         try {
-            await saveScore({ nickname: socket.data.username, mode: game.mode, score, elapsedMs });
+            await saveScore({ nickname: socket.data.username, mode: game.mode, score, elapsedMs, level: game.liv || 1 });
         } catch (e) {
             console.error('Errore salvataggio punteggio:', e.message);
         }
@@ -81,12 +90,29 @@ module.exports = (io, main) => {
                 socket.to(game.roomId).emit('gameResult', { result: 'lose' });
             }
             socket.leave(game.roomId);
-        } else {
-            const topScores = await getTopScores();
-            io.to(socket.id).emit('gameOverAck', { score, elapsedMs, topScores });
+            socket.data.game = null;
+            return;
         }
 
-        socket.data.game = null;
+        // modalità campaign: livello superato, si passa automaticamente al successivo con più bottoni
+        const totalScore = (game.totalScore || 0) + score;
+        const nextLiv = (game.liv || 1) + 1;
+
+        if (nextLiv > MAX_LEVEL) {
+            const topScores = await getTopScores();
+            io.to(socket.id).emit('gameOverAck', { score: totalScore, elapsedMs, topScores, liv: game.liv });
+            socket.data.game = null;
+            return;
+        }
+
+        const nextPuzzle = generatePuzzle(numButtonsForLevel(nextLiv));
+        socket.data.game = { mode: 'campain', puzzle: nextPuzzle, liv: nextLiv, totalScore, startTime: Date.now() };
+        io.to(socket.id).emit('gameSet', {
+            mode: 'campain',
+            puzzle: nextPuzzle,
+            liv: nextLiv,
+            levelComplete: { previousLiv: game.liv || 1, score, totalScore },
+        });
     };
 
     const gameDisconnectCleanup = function () {

@@ -7,5 +7,6 @@ CREATE TABLE IF NOT EXISTS scores (
     mode VARCHAR(20) NOT NULL DEFAULT 'campain',
     score INT NOT NULL,
     elapsed_ms INT NOT NULL,
+    level INT NOT NULL DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

@@ -1522,8 +1522,20 @@ user {
     transform: scale(1.08);
 }
 
+/* effetto "esplosione" quando una coppia viene accoppiata */
+@keyframes popExplode {
+    0%   { transform: scale(1); filter: brightness(1); }
+    40%  { transform: scale(1.4); filter: brightness(2.2); }
+    100% { transform: scale(0); filter: brightness(2.2); opacity: 0; }
+}
+
+.buttonGame.popping {
+    animation: popExplode 0.45s ease-out forwards;
+    pointer-events: none;
+}
+
 .buttonGame.matched {
-    opacity: 0.35;
+    visibility: hidden;
     cursor: default;
 }
 
@@ -1573,6 +1585,14 @@ user {
 }
 div#modal-playGround {
     padding-top: 3em;
+}
+/* mentre si gioca, la finestra sale fino all'80% dello schermo e i bottoni scorrono al suo interno */
+#modal-document.game-open {
+    height: 80%;
+}
+#buttonAreaH {
+    overflow-y: auto;
+    max-height: 60vh;
 }
 .starr{
     background-repeat: no-repeat;

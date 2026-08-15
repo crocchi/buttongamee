@@ -122,7 +122,7 @@
         <br>
         <div class="modal-body">
                 
-        <div onclick="playStart(1,20)" class="contact">
+        <div onclick="playStart(1)" class="contact">
             <img class="pic imgPlaygame" src="https://latitanti.altervista.org/BG/img/png.png" ></img>
             <h2>CAMPAIGN </h2>
          </div>
@@ -146,7 +146,9 @@
         <h2>Giochi Area</h2>
         <div id="gameInfo">
             <h2 id="gameLevel"></h2>
-            <span id="gameScore">Punteggio: 0</span>
+            <span id="gameScore">Punteggio livello: 0</span>
+            &nbsp;&bull;&nbsp;
+            <span id="gameTotalScore">Totale: 0</span>
             &nbsp;&bull;&nbsp;
             <span id="gameRemaining"></span>
             <div id="gameBonusMsg"></div>
@@ -184,8 +186,8 @@
           <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" integrity="sha384-mZLF4UVrpi/QTWPA7BjNPEnkIfRFn4ZEO3Qt/HFklTJBj/gBOV8G3HcKn4NfQblz" crossorigin="anonymous"></script>
 		<script>
 			
-            let playStart = (liv,num)=>{
-            user.socket.emit('game start',liv,num );// liv=1,num=20
+            let playStart = (liv)=>{
+            user.socket.emit('game start',liv );// il numero di bottoni aumenta automaticamente col livello
             }
 
         let playStart1vs1 = ()=>{

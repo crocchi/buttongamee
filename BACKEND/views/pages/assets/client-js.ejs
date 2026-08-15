@@ -1,5 +1,50 @@
 <script>
 
+// piccoli effetti sonori sintetizzati via Web Audio (nessun file audio da scaricare/ospitare)
+class Sfx {
+    ctx = null;
+
+    ensureCtx(){
+        if(!this.ctx){
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            this.ctx = new AudioCtx();
+        }
+        if(this.ctx.state === 'suspended') this.ctx.resume();
+        return this.ctx;
+    }
+
+    beep(freq = 440, duration = 0.12, type = 'sine', gain = 0.15){
+        try {
+            const ctx = this.ensureCtx();
+            const osc = ctx.createOscillator();
+            const g = ctx.createGain();
+            osc.type = type;
+            osc.frequency.value = freq;
+            osc.connect(g).connect(ctx.destination);
+
+            const now = ctx.currentTime;
+            g.gain.setValueAtTime(gain, now);
+            g.gain.exponentialRampToValueAtTime(0.001, now + duration);
+            osc.start(now);
+            osc.stop(now + duration);
+        } catch (e) {
+            // audio non disponibile nel browser: ignora silenziosamente
+        }
+    }
+
+    match(){ this.beep(660, 0.12, 'triangle', 0.18); }
+    wrong(){ this.beep(160, 0.2, 'sawtooth', 0.12); }
+    bomb(){ this.beep(90, 0.3, 'square', 0.22); }
+    point(){
+        this.beep(880, 0.15, 'sine', 0.2);
+        setTimeout(() => this.beep(1100, 0.15, 'sine', 0.15), 90);
+    }
+    levelUp(){
+        [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => this.beep(f, 0.15, 'triangle', 0.2), i * 110));
+    }
+}
+
+const sfx = new Sfx();
 
 class Client {
 
@@ -13,7 +58,6 @@ span = document.getElementsByClassName("close")[0];
 btnPlay = this.getEl("play");
 btnConf = this.getEl("conf");
 btnStats = this.getEl("stats");
-btnPlayGame = this.getEl("playGame");
 // info account
 infoUsername = this.getEl("infoAccount");
 
@@ -67,9 +111,6 @@ eventDom(){
     this.btnPlay.onclick = ()=> {
         this.openPag('game');
       }
-    this.btnPlayGame.onclick = ()=> {
-        this.openPag('gameArea');
-      }
 
 }
 
@@ -99,11 +140,13 @@ testoHeader= this.getEl('labelPage');// MODAL TEXT & GRAPHIC EDIT
 logoHeader= this.getEl('labelLogo');
 // Get the modal
 modal = this.getEl("myModal");
+modalContent = this.getEl("modal-document");
 
 // AREA E CONTATORI DEL GIOCO
 buttonArea = this.getEl('buttonAreaH');
 gameLevelEl = this.getEl('gameLevel');
 gameScoreEl = this.getEl('gameScore');
+gameTotalScoreEl = this.getEl('gameTotalScore');
 gameRemainingEl = this.getEl('gameRemaining');
 gameBonusMsgEl = this.getEl('gameBonusMsg');
 waitingPlayer = this.getEl('waitingplayer');
@@ -114,6 +157,7 @@ statsListEl = this.getEl('statsListEl');
 selectedButton = null;
 remainingPairs = 0;
 score = 0;
+totalScore = 0;
 startTime = 0;
 currentMode = null;
 
@@ -151,7 +195,8 @@ switch(page) {
 
 buildPage(pageToBuild){
 let page=pageToBuild;
-if(page==='gameArea'){ this.closeModal()}
+// nasconde sempre la pagina precedente prima di mostrare quella nuova (evita sovrapposizioni)
+this.closeModal();
 let infoPage={ 
     conf:[this.pageConf,"CONFIGURAZIONI","fa-solid fa-gear"],
     stat:[this.pageStat,"CLASSIFICA","fa-solid fa-star"],
@@ -166,6 +211,9 @@ if(pageTemp.classList.contains("hide")){
 
 this.testoHeader.innerText=infoPage[`${page}`][1];
 this.logoHeader.className=infoPage[`${page}`][2];
+
+// la schermata di gioco occupa fino all'80% dello schermo, con scroll interno per i bottoni
+this.modalContent.classList.toggle('game-open', page === 'gameArea');
 
 if(page==='stat'){
     this.socket.emit('stats request');
@@ -195,7 +243,7 @@ bindGameEvents(){
 }
 
 onGameSet(payload){
-    const { mode, puzzle, data, liv } = payload;
+    const { mode, puzzle, data, liv, levelComplete } = payload;
 
     if(mode === '1vs1-wait'){
         if(this.waitingPlayer.classList.contains('hide')){
@@ -207,6 +255,15 @@ onGameSet(payload){
 
     if(!this.waitingPlayer.classList.contains('hide')){
         this.waitingPlayer.classList.toggle('hide');
+    }
+
+    if(levelComplete){
+        // livello superato: si continua subito col livello successivo, niente ritorno al menu
+        this.totalScore = levelComplete.totalScore;
+        sfx.levelUp();
+        this.showBonusMessage(`LIVELLO ${levelComplete.previousLiv} completato! +${levelComplete.score} punti`);
+    } else {
+        this.totalScore = 0;
     }
 
     this.startGame(mode, puzzle, liv);
@@ -270,18 +327,20 @@ onButtonClick(btn){
 
     if(first.dataset.value === btn.dataset.value){
         first.classList.remove('selected');
-        first.classList.add('matched');
-        btn.classList.add('matched');
         first.disabled = true;
         btn.disabled = true;
+        this.popButtons(first, btn);
+        sfx.match();
 
         this.score += 10;
         this.remainingPairs -= 1;
 
         if(first.dataset.value === 'point'){
             this.score += 50;
+            sfx.point();
             this.showBonusMessage('Atom the Point: +50 punti extra!');
         } else if(first.dataset.value === 'bomb'){
+            sfx.bomb();
             this.showBonusMessage('Atom the Bomb: distrutta un\'altra coppia!');
             this.destroyRandomPair();
         }
@@ -292,12 +351,21 @@ onButtonClick(btn){
             this.socket.emit('game over', { score: this.score });
         }
     } else {
+        sfx.wrong();
         btn.classList.add('wrong');
         setTimeout(() => {
             first.classList.remove('selected');
             btn.classList.remove('wrong');
         }, 400);
     }
+}
+
+// effetto grafico di "esplosione" quando una coppia viene accoppiata: i bottoni si ingrandiscono e svaniscono
+popButtons(...buttons){
+    buttons.forEach(b => {
+        b.classList.add('popping');
+        setTimeout(() => b.classList.add('matched'), 450);
+    });
 }
 
 // simula l'esplosione di Atom the Bomb: distrugge un'altra coppia scelta a caso tra quelle rimaste
@@ -310,10 +378,8 @@ destroyRandomPair(){
     const pairEls = remaining.filter(b => b.dataset.value === value);
     if(pairEls.length < 2) return;
 
-    pairEls.slice(0, 2).forEach(b => {
-        b.classList.add('matched');
-        b.disabled = true;
-    });
+    pairEls.slice(0, 2).forEach(b => { b.disabled = true; });
+    this.popButtons(...pairEls.slice(0, 2));
 
     this.score += 10;
     this.remainingPairs -= 1;
@@ -327,13 +393,17 @@ showBonusMessage(text){
 }
 
 updateScoreboard(){
-    this.gameScoreEl.innerText = `Punteggio: ${this.score}`;
+    this.gameScoreEl.innerText = `Punteggio livello: ${this.score}`;
+    this.gameTotalScoreEl.innerText = `Totale: ${this.totalScore + this.score}`;
     this.gameRemainingEl.innerText = `NUMERI RIMASTI: ${this.remainingPairs}`;
 }
 
-onGameOverAck({ score, elapsedMs, topScores }){
-    alert(`Partita finita! Punteggio: ${score} in ${(elapsedMs/1000).toFixed(1)}s`);
+onGameOverAck({ score, elapsedMs, topScores, liv }){
+    alert(`Hai completato tutti i livelli (fino al livello ${liv})! Punteggio totale: ${score} in ${(elapsedMs/1000).toFixed(1)}s`);
+    this.totalScore = 0;
     this.renderStats(topScores);
+    // torna al menu di scelta gioco invece di lasciare la scacchiera finita a schermo
+    this.openPag('game');
 }
 
 onGameResult({ result, reason }){
@@ -342,6 +412,7 @@ onGameResult({ result, reason }){
     } else {
         alert('Hai perso, riprova!');
     }
+    this.openPag('game');
 }
 
 renderStats(rows){

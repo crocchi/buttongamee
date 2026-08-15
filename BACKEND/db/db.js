@@ -20,9 +20,17 @@ async function initDb() {
             mode VARCHAR(20) NOT NULL DEFAULT 'campain',
             score INT NOT NULL,
             elapsed_ms INT NOT NULL,
+            level INT NOT NULL DEFAULT 1,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     `);
+
+    // aggiunge la colonna "level" alle tabelle create prima di questa modifica
+    try {
+        await pool.query('ALTER TABLE scores ADD COLUMN level INT NOT NULL DEFAULT 1');
+    } catch (e) {
+        if (e.code !== 'ER_DUP_FIELDNAME') throw e;
+    }
 }
 
 module.exports = { pool, initDb };
