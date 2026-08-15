@@ -30,6 +30,7 @@
 							<ul>
 							<!--	<li><a href="#" class="fa-solid fa-house"><span class="label">Home</span></a></li>-->
 								<li><a href="#" id='play' class="fa-solid fa-play"><span class="label">PlayGame</span></a></li>
+								<li><a href="#" id='adventure' class="fa-solid fa-map-location-dot"><span class="label">Avventura</span></a></li>
 								<li><a href="#" id='stats' class="fa-solid fa-star"><span class="label">Stats</span></a></li>
 								<li><a href="#" id='conf' class="fa-solid fa-gear"><span class="label">Conf</span></a></li>
                                </ul>
@@ -109,7 +110,7 @@
         <h2>Play The Game</h2>
         <br>
         <div class="modal-body">
-                
+
         <div onclick="toggleNumberBlastModes(event)" class="contact game-mode-card" id="numberBlastGameCard">
             <img class="pic imgPlaygame" src="https://latitanti.altervista.org/BG/img/png.png" ></img>
             <h2>NUMBER BLAST</h2>
@@ -151,7 +152,6 @@
          </div>
     </div> 
 
-
      <!--          PAGINA PLAYGROUND     .gaming-area -->
      <div id='modal-playGround' class="modal-body hide">
         <h2>Giochi Area</h2>
@@ -190,6 +190,26 @@
 
 			</div>
 		</div>
+
+    <!-- Schermata autonoma, esterna al sistema delle modal -->
+    <section id="adventure-screen" class="adventure-screen hide" aria-label="Mappa Avventura">
+        <div class="adventure-panel">
+            <div class="adventure-header">
+                <button type="button" id="adventureBack" class="adventure-back" aria-label="Torna alla home">
+                    <span class="fa-solid fa-arrow-left"></span><span>HOME</span>
+                </button>
+                <div class="adventure-heading">
+                    <small>CAMPAGNA</small>
+                    <h2>Mappa Avventura</h2>
+                    <p>Completa i nodi, raccogli le stelle e sblocca il mondo successivo.</p>
+                </div>
+                <div class="adventure-total"><span class="fa-solid fa-star"></span><strong id="adventureStars">0/60</strong></div>
+            </div>
+            <div id="adventureMap" class="adventure-map" aria-live="polite">
+                <p class="adventure-loading">Caricamento della mappa…</p>
+            </div>
+        </div>
+    </section>
 	 <script src="https://kit.fontawesome.com/e4ff14a47e.js" crossorigin="anonymous"></script>
      <%- include('./assets/client-js'); %>    
         <script>
@@ -198,7 +218,7 @@
 		    document.body.classList.remove('is-preload');
 		    user= new Page();
 	    }
-                  window.ontouchmove = function() { return false; }
+                  window.ontouchmove = function(event) { return Boolean(event.target.closest('#adventure-screen')); }
                   window.onorientationchange = function() { document.body.scrollTop = 0; }
 		
           </script>  

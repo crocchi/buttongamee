@@ -72,6 +72,7 @@ class Main{
             sudokuStart, sudokuInput,
             pairStart, pairOnline1vs1,
             escapeStart, escapeOnline1vs1, escapeAnswer,
+            adventureRequest, adventureStart,
         } = require("./event/game")(this.io, this);
 
         //SOCKET.IO EVENT HANDLER
@@ -97,6 +98,8 @@ class Main{
             socket.on("escape start", escapeStart);
             socket.on("escapeOnline 1vs1", escapeOnline1vs1);
             socket.on("escape answer", escapeAnswer);
+            socket.on("adventure request", adventureRequest);
+            socket.on("adventure start", adventureStart);
           }
 
         this.io.on("connection", this.onConnection);

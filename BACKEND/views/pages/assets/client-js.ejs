@@ -48,6 +48,18 @@ class Sfx {
 
 const sfx = new Sfx();
 
+function getAdventurePlayerId(){
+    let id = localStorage.getItem('buttonGamePlayerId');
+    if(!id){
+        const randomPart = window.crypto && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        id = `player-${randomPart}`;
+        localStorage.setItem('buttonGamePlayerId', id);
+    }
+    return id;
+}
+
 class Client {
 
 socket;
@@ -58,6 +70,7 @@ DOCUMENT=window;
 span = document.getElementsByClassName("close")[0];
   // Get the button homepage
 btnPlay = this.getEl("play");
+btnAdventure = this.getEl("adventure");
 btnConf = this.getEl("conf");
 btnStats = this.getEl("stats");
 // info account
@@ -65,7 +78,7 @@ infoUsername = this.getEl("infoAccount");
 
 constructor(){
     this.socket = io({
-     auth: {token: this.token}
+     auth: {token: this.token, playerId: getAdventurePlayerId()}
 })
     this.init();
     this.eventDom();
@@ -113,6 +126,10 @@ eventDom(){
     this.btnPlay.onclick = ()=> {
         this.openPag('game');
       }
+    this.btnAdventure.onclick = (event)=> {
+        event.preventDefault();
+        this.openAdventure();
+      }
 
 }
 
@@ -135,6 +152,8 @@ class Page extends Client{
 pageConf =this.getEl('modal-conf-page')        // PAGINA CONFIGURAZIONE
 pageStat= this.getEl('modal-conf-stat')  // PAGINA STAT CLASSSSIFICA
 pageGame= this.getEl('modal-conf-game');  //INIZIO SCELTA GIOCO
+pageMap= this.getEl('adventure-screen');
+adventureBack= this.getEl('adventureBack');
 
 pageGameArea= this.getEl('modal-playGround'); // PLAY AREA
 testoHeader= this.getEl('labelPage');// MODAL TEXT & GRAPHIC EDIT
@@ -164,8 +183,12 @@ escapeWaitingText = this.getEl('escapeWaitingText');
 statsListEl = this.getEl('statsListEl');
 leaderboardTabsEl = this.getEl('leaderboardTabs');
 leaderboardSummaryEl = this.getEl('leaderboardSummary');
+adventureMapEl = this.getEl('adventureMap');
+adventureStarsEl = this.getEl('adventureStars');
 statsGroups = null;
 activeStatsGroup = 'numberBlast';
+adventureData = null;
+currentAdventureNode = null;
 
 // STATO PARTITA IN CORSO
 selectedButton = null;
@@ -195,6 +218,7 @@ constructor(){
     super();
     this.setupSettings();
     this.bindGameEvents();
+    this.adventureBack.onclick = () => this.closeAdventure();
 }
 
 setupSettings(){
@@ -221,6 +245,7 @@ setupSettings(){
 
 
 openPag(page){
+this.closeAdventure();
 this.modal.style.display = "block";
 
 switch(page) {
@@ -268,7 +293,19 @@ this.modalContent.classList.toggle('game-open', page === 'gameArea');
 if(page==='stat'){
     this.socket.emit('stats request');
 }
+}
 
+openAdventure(){
+    this.modal.style.display = 'none';
+    this.closeModal();
+    this.pageMap.classList.remove('hide');
+    document.body.classList.add('adventure-open');
+    this.socket.emit('adventure request');
+}
+
+closeAdventure(){
+    if(this.pageMap) this.pageMap.classList.add('hide');
+    document.body.classList.remove('adventure-open');
 }
 
 closeModal(){
@@ -308,10 +345,17 @@ bindGameEvents(){
     this.socket.on('escapeComplete', (payload) => this.onEscapeComplete(payload));
     this.socket.on('pairsComplete', (payload) => this.onPairsComplete(payload));
     this.socket.on('statsData', (rows) => this.renderStats(rows));
+    this.socket.on('adventureData', (payload) => this.renderAdventureMap(payload));
+    this.socket.on('adventureNodeComplete', (payload) => this.onAdventureNodeComplete(payload));
+    this.socket.on('adventureNodeFailed', (payload) => this.onAdventureNodeFailed(payload));
+    this.socket.on('adventureError', ({ message }) => {
+        alert(message || 'Errore nella Mappa Avventura.');
+        this.openAdventure();
+    });
 }
 
 onGameSet(payload){
-    const { mode, puzzle, data, liv, levelComplete, elapsedMs = 0, config = null, lockedIndices = [] } = payload;
+    const { mode, puzzle, data, liv, levelComplete, elapsedMs = 0, config = null, lockedIndices = [], adventureNode = null } = payload;
 
     if(mode === 'match3' || mode === 'match3-1vs1'){
         this.setupMatch3(payload);
@@ -341,7 +385,7 @@ onGameSet(payload){
         this.totalScore = 0;
     }
 
-    this.startGame(mode, puzzle, liv, elapsedMs, config, lockedIndices);
+    this.startGame(mode, puzzle, liv, elapsedMs, config, lockedIndices, adventureNode);
 }
 
 hideWaitingIndicators(){
@@ -355,6 +399,82 @@ hideWaitingIndicators(){
     });
 }
 
+renderAdventureMap(payload){
+    if(!payload || !this.adventureMapEl) return;
+    this.adventureData = payload;
+    const progressByNode = new Map((payload.progress || []).map(row => [Number(row.node_id), row]));
+    const totalStars = Array.from(progressByNode.values()).reduce((sum, row) => sum + Number(row.stars || 0), 0);
+    if(this.adventureStarsEl) this.adventureStarsEl.textContent = `${totalStars}/${(payload.nodes || []).length * 3}`;
+    this.adventureMapEl.replaceChildren();
+
+    (payload.worlds || []).forEach(world => {
+        const section = document.createElement('section');
+        section.className = `adventure-world world-${world.theme || world.id}`;
+        const header = document.createElement('header');
+        header.className = 'adventure-world-header';
+        const worldProgress = (payload.nodes || []).filter(node => node.world === world.id && progressByNode.has(node.id)).length;
+        header.innerHTML = `<span>MONDO ${world.id}</span><h3></h3><p></p><strong>${worldProgress}/10</strong>`;
+        header.querySelector('h3').textContent = world.name;
+        header.querySelector('p').textContent = world.description;
+        section.appendChild(header);
+
+        const path = document.createElement('div');
+        path.className = 'adventure-path';
+        (payload.nodes || []).filter(node => node.world === world.id).forEach(node => {
+            const result = progressByNode.get(node.id);
+            const unlocked = node.id === 1 || progressByNode.has(node.id - 1);
+            const item = document.createElement('div');
+            item.className = `adventure-node-wrap${node.position % 2 === 0 ? ' path-right' : ' path-left'}`;
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `adventure-node game-${node.game}${result ? ' completed' : ''}${node.boss ? ' boss' : ''}`;
+            button.disabled = !unlocked;
+            button.setAttribute('aria-label', unlocked ? `Livello ${node.id}: ${node.title}` : `Livello ${node.id} bloccato`);
+            const icon = document.createElement('span');
+            icon.className = 'adventure-node-icon';
+            icon.textContent = unlocked ? node.icon : '🔒';
+            const number = document.createElement('strong');
+            number.textContent = node.id;
+            const stars = document.createElement('small');
+            const starCount = Number(result && result.stars || 0);
+            stars.textContent = `${'★'.repeat(starCount)}${'☆'.repeat(3 - starCount)}`;
+            button.append(icon, number, stars);
+            if(unlocked){
+                button.onclick = () => {
+                    this.currentAdventureNode = node;
+                    button.classList.add('launching');
+                    this.socket.emit('adventure start', node.id);
+                };
+            }
+            const label = document.createElement('div');
+            label.className = 'adventure-node-label';
+            label.innerHTML = `<strong></strong><small>${node.boss ? 'BOSS · ' : ''}${node.label}</small>`;
+            label.querySelector('strong').textContent = node.title;
+            item.append(button, label);
+            path.appendChild(item);
+        });
+        section.appendChild(path);
+        this.adventureMapEl.appendChild(section);
+    });
+}
+
+onAdventureNodeComplete(payload){
+    this.stopTimer();
+    this.renderAdventureMap(payload);
+    this.currentAdventureNode = null;
+    sfx.levelUp();
+    alert(`Livello ${payload.nodeId} completato! ${'★'.repeat(payload.stars)}${'☆'.repeat(3 - payload.stars)} · ${payload.score} punti`);
+    this.openAdventure();
+}
+
+onAdventureNodeFailed({ reason }){
+    this.stopTimer();
+    this.currentAdventureNode = null;
+    const messages = { time: 'Tempo scaduto', moves: 'Mosse terminate', timeout: 'Tempo scaduto', lives: 'Vite terminate' };
+    alert(`${messages[reason] || 'Sfida non superata'}. Puoi riprovare dalla mappa.`);
+    this.openAdventure();
+}
+
 // icone dei bonus originali del gioco: Atom the Point (punti extra) e Atom the Bomb (distrugge un'altra coppia)
 BONUS_ICON = {
     point: 'https://latitanti.altervista.org/BG/img/atom-the-point.png',
@@ -362,7 +482,7 @@ BONUS_ICON = {
 };
 
 setupMatch3(payload){
-    const { board, liv, score = 0, totalScore = 0, movesLeft, definition, elapsedMs = 0, levelComplete, playerScores = {} } = payload;
+    const { board, liv, score = 0, totalScore = 0, movesLeft, definition, elapsedMs = 0, levelComplete, playerScores = {}, adventureNode = null } = payload;
     const multiplayer = payload.mode === 'match3-1vs1';
     this.currentMode = payload.mode;
     this.currentConfig = null;
@@ -371,7 +491,9 @@ setupMatch3(payload){
     this.match3Selected = null;
     this.match3Busy = false;
     this.startTimer(elapsedMs);
-    this.gameLevelEl.textContent = multiplayer ? 'NUMBER BLAST · 1 VS 1' : `NUMBER BLAST · LIVELLO ${liv}/10`;
+    this.gameLevelEl.textContent = adventureNode
+        ? `MAPPA #${adventureNode.id} · ${adventureNode.title}`
+        : (multiplayer ? 'NUMBER BLAST · 1 VS 1' : `NUMBER BLAST · LIVELLO ${liv}/10`);
     this.gameMissionEl.textContent = multiplayer
         ? 'Condividete la griglia: conquista più punti in 30 mosse'
         : `Raggiungi ${definition.targetScore} punti in ${definition.moves} mosse`;
@@ -573,13 +695,13 @@ spawnMatch3Particles(tile, cascade){
     }
 }
 
-setupSudoku({ board, fixed, errors = 0, elapsedMs = 0 }){
+setupSudoku({ board, fixed, errors = 0, elapsedMs = 0, adventureNode = null }){
     this.currentMode = 'sudoku';
     this.currentConfig = null;
     this.errors = errors;
     this.sudokuSelected = null;
     this.startTimer(elapsedMs);
-    this.gameLevelEl.textContent = 'SUDOKU · CLASSICO';
+    this.gameLevelEl.textContent = adventureNode ? `MAPPA #${adventureNode.id} · ${adventureNode.title}` : 'SUDOKU · CLASSICO';
     this.gameMissionEl.textContent = 'Completa ogni riga, colonna e riquadro 3×3 con i numeri da 1 a 9';
     this.gameScoreEl.textContent = 'DIFFICOLTÀ: MEDIA';
     this.gameTotalScoreEl.textContent = '';
@@ -661,7 +783,7 @@ setupEscapeMath(payload){
         level, score = 0, lives = 3, prompt, choices = [], hint, type,
         boss = false, timeLimitMs = 30000, puzzleId, elapsedMs = 0,
         correct, message, gained, mode = 'escape-math', roundsTotal = 100,
-        playerScores = {}, playerProgress = {}, opponentLives = 3,
+        playerScores = {}, playerProgress = {}, opponentLives = 3, adventureNode = null,
     } = payload;
     const multiplayer = mode === 'escape-math-1vs1';
     this.hideWaitingIndicators();
@@ -675,9 +797,11 @@ setupEscapeMath(payload){
     const rivalScore = opponentId ? (playerScores[opponentId] || 0) : 0;
     const myProgress = playerProgress[this.socket.id] || Math.max(0, level - 1);
     const rivalProgress = opponentId ? (playerProgress[opponentId] || 0) : 0;
-    this.gameLevelEl.textContent = multiplayer
+    this.gameLevelEl.textContent = adventureNode
+        ? `MAPPA #${adventureNode.id} · ${adventureNode.title}`
+        : (multiplayer
         ? `ESCAPE MATH · 1 VS 1 · PORTA ${level}/${roundsTotal}`
-        : `ESCAPE MATH · STANZA ${level}/100${boss ? ' · BOSS' : ''}`;
+        : `ESCAPE MATH · STANZA ${level}/100${boss ? ' · BOSS' : ''}`);
     this.gameMissionEl.textContent = multiplayer
         ? 'Stessi enigmi: apri per primo tutte le 10 porte'
         : 'Scegli la risposta corretta prima che la porta si blocchi';
@@ -773,7 +897,7 @@ onPairsComplete({ score, elapsedMs, errors }){
     this.requestPlayerName();
 }
 
-startGame(mode, puzzle, liv, elapsedMs = 0, config = null, lockedIndices = []){
+startGame(mode, puzzle, liv, elapsedMs = 0, config = null, lockedIndices = [], adventureNode = null){
     this.currentMode = mode;
     this.currentConfig = config;
     this.score = 0;
@@ -793,11 +917,13 @@ startGame(mode, puzzle, liv, elapsedMs = 0, config = null, lockedIndices = []){
     if(mode === 'campain' && puzzle.length > 80) this.buttonArea.classList.add('large-pairs-board');
     this.buttonArea.style.removeProperty('--board-size');
     this.buttonArea.innerHTML = '';
-    this.gameLevelEl.innerText = mode === 'pairs'
+    this.gameLevelEl.innerText = adventureNode
+        ? `MAPPA #${adventureNode.id} · ${adventureNode.title}`
+        : (mode === 'pairs'
         ? 'COPPIE DI NUMERI · SINGLE PLAYER'
         : (mode === 'pairs-1vs1'
             ? 'COPPIE DI NUMERI · 1 VS 1'
-            : `COPPIE DI NUMERI · MONDO ${config ? config.world : 1} · LIVELLO ${liv || 1}/100${config && config.boss ? ' · BOSS' : ''}`);
+            : `COPPIE DI NUMERI · MONDO ${config ? config.world : 1} · LIVELLO ${liv || 1}/100${config && config.boss ? ' · BOSS' : ''}`));
     this.renderMission();
     this.updateScoreboard();
 

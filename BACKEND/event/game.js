@@ -2,6 +2,8 @@ const { saveScore, getTopScores, getLeaderboardsByGame, updateScoreNickname } = 
 const { createBoard, makeMove, levelDefinition } = require('../game/match3Engine');
 const { createSudoku, isComplete } = require('../game/sudokuEngine');
 const { createEscapePuzzle } = require('../game/escapeMathEngine');
+const { getAdventureProgress, isAdventureNodeUnlocked, saveAdventureProgress } = require('../db/adventureModel');
+const { ADVENTURE_WORLDS, ADVENTURE_NODES, getAdventureNode, calculateStars } = require('../game/adventureMap');
 
 // giocatori in attesa di un avversario per la modalità 1vs1
 const waitingQueue = [];
@@ -199,8 +201,53 @@ module.exports = (io, main) => {
         }
     };
 
+    const adventureMapPayload = async function (socket) {
+        const progress = await getAdventureProgress(socket.data.playerId);
+        return { worlds: ADVENTURE_WORLDS, nodes: ADVENTURE_NODES, progress };
+    };
+
+    const completeAdventureNode = async function (socket, game, score, metrics = {}) {
+        if (!game || game.adventureCompleting || socket.data.game !== game) return;
+        game.adventureCompleting = true;
+        game.finishing = true;
+        clearEscapeDeadline(game);
+        clearCampaignDeadline(game);
+        clearSelectionTimers(game);
+        const node = getAdventureNode(game.adventureNodeId);
+        const elapsedMs = Date.now() - game.adventureStartTime;
+        const stars = calculateStars(node, { elapsedMs, ...metrics });
+        try {
+            const progress = await saveAdventureProgress({
+                playerId: socket.data.playerId, nodeId: node.id, stars,
+                score: Math.max(0, Math.round(Number(score) || 0)), elapsedMs,
+            });
+            socket.data.game = null;
+            socket.emit('adventureNodeComplete', {
+                nodeId: node.id, stars, score, elapsedMs,
+                worlds: ADVENTURE_WORLDS, nodes: ADVENTURE_NODES, progress,
+            });
+        } catch (e) {
+            console.error('Errore salvataggio Mappa Avventura:', e.message);
+            socket.data.game = null;
+            socket.emit('adventureError', { message: 'Progressi non salvati. Riprova il livello.' });
+        }
+    };
+
+    const failAdventureNode = function (socket, game, reason) {
+        if (!game || socket.data.game !== game) return;
+        clearEscapeDeadline(game);
+        clearCampaignDeadline(game);
+        clearSelectionTimers(game);
+        socket.data.game = null;
+        socket.emit('adventureNodeFailed', { nodeId: game.adventureNodeId, reason });
+    };
+
     const finishCampaignLoss = async function (socket, game) {
         if (!game || game.finishing || socket.data.game !== game) return;
+        if (game.adventureNodeId) {
+            failAdventureNode(socket, game, 'time');
+            return;
+        }
         game.finishing = true;
         clearCampaignDeadline(game);
         clearSelectionTimers(game);
@@ -257,6 +304,7 @@ module.exports = (io, main) => {
             mode: 'match3', board: game.board, liv: game.liv, score: game.score,
             totalScore: game.totalScore, movesLeft: game.movesLeft,
             definition: game.definition,
+            adventureNode: game.adventureNode || null,
             elapsedMs: Date.now() - game.campaignStartTime,
             ...extra,
         };
@@ -264,6 +312,10 @@ module.exports = (io, main) => {
 
     const finishMatch3Loss = async function (socket, game) {
         if (game.finishing || socket.data.game !== game) return;
+        if (game.adventureNodeId) {
+            failAdventureNode(socket, game, 'moves');
+            return;
+        }
         game.finishing = true;
         const finalScore = game.totalScore + game.score;
         const elapsedMs = Date.now() - game.campaignStartTime;
@@ -309,6 +361,10 @@ module.exports = (io, main) => {
 
         if (game.score >= game.definition.targetScore) {
             const completedScore = game.score;
+            if (game.adventureNodeId) {
+                void completeAdventureNode(socket, game, completedScore, { errors: 0, lives: 3 });
+                return;
+            }
             const nextLevel = game.liv + 1;
             game.totalScore += completedScore;
             if (nextLevel > 10) {
@@ -640,6 +696,11 @@ module.exports = (io, main) => {
         const elapsedMs = Date.now() - game.campaignStartTime + game.totalPenaltyMs;
         const score = game.levelScore;
 
+        if (game.adventureNodeId) {
+            void completeAdventureNode(socket, game, score, { errors: game.errors, lives: 3 });
+            return;
+        }
+
         try {
             await saveScore({ nickname: socket.data.username, mode: game.mode, score, elapsedMs: levelElapsedMs, level: game.liv || 1 });
         } catch (e) {
@@ -799,12 +860,18 @@ module.exports = (io, main) => {
             type: game.puzzle.type, boss: game.puzzle.boss,
             timeLimitMs: game.puzzle.timeLimitMs, puzzleId: game.puzzleId,
             elapsedMs: Date.now() - game.startTime,
+            adventureNode: game.adventureNode || null,
             ...feedback,
         };
     }
 
     const finishEscapeMath = async function (socket, game, win, reason) {
         if (!game || game.finishing || socket.data.game !== game) return;
+        if (game.adventureNodeId) {
+            if (win) void completeAdventureNode(socket, game, game.score, { lives: game.lives, errors: 3 - game.lives });
+            else failAdventureNode(socket, game, reason);
+            return;
+        }
         game.finishing = true;
         clearEscapeDeadline(game);
         const elapsedMs = Date.now() - game.startTime;
@@ -1067,6 +1134,13 @@ module.exports = (io, main) => {
         const gained = 100 + game.level * 10 + Math.floor(remainingMs / 100);
         game.score += gained;
         const completedLevel = game.level;
+        if (game.adventureNodeId) {
+            game.adventureCompleted = (game.adventureCompleted || 0) + 1;
+            if (game.adventureCompleted >= game.adventureTarget) {
+                void completeAdventureNode(socket, game, game.score, { lives: game.lives, errors: 3 - game.lives });
+                return;
+            }
+        }
         if (completedLevel >= 100) {
             void finishEscapeMath(socket, game, true, 'escaped');
             return;
@@ -1126,6 +1200,10 @@ module.exports = (io, main) => {
         game.finishing = true;
         const elapsedMs = Date.now() - game.startTime;
         const score = Math.max(100, Math.round(10000 - elapsedMs / 100 - game.errors * 500));
+        if (game.adventureNodeId) {
+            void completeAdventureNode(socket, game, score, { errors: game.errors, lives: 3 });
+            return;
+        }
         try {
             const scoreId = await saveScore({ nickname: socket.data.username, mode: 'sudoku', score, elapsedMs, level: 1 });
             if (!socket.data.renameableScoreIds) socket.data.renameableScoreIds = new Set();
@@ -1135,6 +1213,95 @@ module.exports = (io, main) => {
         }
         socket.data.game = null;
         socket.emit('sudokuComplete', { score, elapsedMs, errors: game.errors });
+    };
+
+    const adventureRequest = async function () {
+        const socket = this;
+        try {
+            socket.emit('adventureData', await adventureMapPayload(socket));
+        } catch (e) {
+            console.error('Errore lettura Mappa Avventura:', e.message);
+            socket.emit('adventureError', { message: 'Impossibile caricare la mappa.' });
+        }
+    };
+
+    const adventureStart = async function (rawNodeId) {
+        const socket = this;
+        const node = getAdventureNode(rawNodeId);
+        if (!node) return;
+        try {
+            if (!await isAdventureNodeUnlocked(socket.data.playerId, node.id)) {
+                socket.emit('adventureError', { message: 'Completa il livello precedente per sbloccare questo nodo.' });
+                return;
+            }
+        } catch (e) {
+            console.error('Errore verifica nodo Mappa Avventura:', e.message);
+            socket.emit('adventureError', { message: 'Impossibile avviare il livello.' });
+            return;
+        }
+
+        removeFromWaitingQueue(socket);
+        clearEscapeDeadline(socket.data.game);
+        clearCampaignDeadline(socket.data.game);
+        clearSelectionTimers(socket.data.game);
+        const now = Date.now();
+
+        if (node.game === 'match3') {
+            const definition = levelDefinition(node.difficulty);
+            socket.data.game = {
+                mode: 'match3', liv: node.difficulty, board: createBoard(definition.size), definition,
+                score: 0, totalScore: 0, movesLeft: definition.moves,
+                campaignStartTime: now, finishing: false,
+                adventureNodeId: node.id, adventureNode: node, adventureStartTime: now,
+            };
+            socket.emit('gameSet', match3Payload(socket.data.game));
+            return;
+        }
+
+        if (node.game === 'pairs') {
+            const config = levelConfig(node.difficulty);
+            const puzzle = generateCampaignPuzzle(config.numButtons, config.matchRule);
+            const lockedIndices = lockedIndicesForPuzzle(puzzle, config.lockedCount);
+            socket.data.game = {
+                mode: 'campain', puzzle, liv: node.difficulty, totalScore: 0, levelScore: 0,
+                startTime: now, campaignStartTime: now, matched: new Set(), selections: new Map(),
+                finishing: false, levelPenaltyMs: 0, totalPenaltyMs: 0, errors: 0,
+                combo: 0, config, locked: new Set(lockedIndices),
+                adventureNodeId: node.id, adventureNode: node, adventureStartTime: now,
+            };
+            socket.emit('gameSet', {
+                mode: 'campain', puzzle, liv: node.difficulty, elapsedMs: 0,
+                config, lockedIndices, adventureNode: node,
+            });
+            setCampaignDeadline(socket, socket.data.game);
+            return;
+        }
+
+        if (node.game === 'escape') {
+            const level = Math.min(100, node.difficulty * 5);
+            const puzzle = createEscapePuzzle(level);
+            socket.data.game = {
+                mode: 'escape-math', level, score: 0, lives: 3, puzzle,
+                puzzleId: 1, startTime: now, roomStartedAt: now, finishing: false,
+                adventureNodeId: node.id, adventureNode: node, adventureStartTime: now,
+                adventureCompleted: 0, adventureTarget: node.target,
+            };
+            socket.emit('escapeSet', escapePayload(socket.data.game));
+            setEscapeDeadline(socket, socket.data.game);
+            return;
+        }
+
+        const blanks = Math.min(50, 24 + node.difficulty * 2);
+        const { puzzle, solution } = createSudoku(blanks);
+        socket.data.game = {
+            mode: 'sudoku', board: puzzle.map(row => [...row]), solution,
+            fixed: puzzle.map(row => row.map(Boolean)), errors: 0, startTime: now, finishing: false,
+            adventureNodeId: node.id, adventureNode: node, adventureStartTime: now,
+        };
+        socket.emit('sudokuSet', {
+            board: puzzle, fixed: socket.data.game.fixed, errors: 0, elapsedMs: 0,
+            adventureNode: node,
+        });
     };
 
     const setScoreNickname = async function (value) {
@@ -1163,10 +1330,12 @@ module.exports = (io, main) => {
         sudokuStart, sudokuInput,
         pairStart, pairOnline1vs1,
         escapeStart, escapeOnline1vs1, escapeAnswer,
+        adventureRequest, adventureStart,
     };
 };
 
 module.exports._test = {
     levelConfig, generatePuzzle, generateCampaignPuzzle, valuesMatch, hasRemainingMatch,
     lockedIndicesForPuzzle, normalizeNickname, MAX_LEVEL, ESCAPE_VERSUS_ROUNDS,
+    calculateStars,
 };

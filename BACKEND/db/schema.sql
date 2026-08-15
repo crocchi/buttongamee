@@ -10,3 +10,13 @@ CREATE TABLE IF NOT EXISTS scores (
     level INT NOT NULL DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS adventure_progress (
+    player_id VARCHAR(64) NOT NULL,
+    node_id INT NOT NULL,
+    stars TINYINT NOT NULL DEFAULT 1,
+    best_score INT NOT NULL DEFAULT 0,
+    best_elapsed_ms INT NOT NULL,
+    completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (player_id, node_id)
+);
