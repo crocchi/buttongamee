@@ -88,20 +88,17 @@ test('i livelli somma 10 generano soltanto coppie compatibili', () => {
     }
 });
 
-test('un puzzle dispari mantiene una tessera senza coppia e può comunque terminare', () => {
-    const { generatePuzzle, hasRemainingMatch } = require('../event/game')._test;
-    const puzzle = generatePuzzle(5, 'equal');
+test('un puzzle dispari usa coppie e tris senza numeri segnaposto', () => {
+    const { generateCampaignPuzzle, hasRemainingMatch } = require('../event/game')._test;
+    const puzzle = generateCampaignPuzzle(5, 'equal');
     assert.equal(puzzle.length, 5);
+    assert.equal(Math.max(...puzzle.filter(value => typeof value === 'number')), 2);
 
     const counts = new Map();
     puzzle.forEach(value => counts.set(value, (counts.get(value) || 0) + 1));
-    assert.equal(Array.from(counts.values()).filter(count => count === 1).length, 1);
+    assert.deepEqual(Array.from(counts.values()).sort(), [2, 3]);
 
-    const matched = new Set();
-    for (const [value, count] of counts) {
-        if (count < 2) continue;
-        puzzle.forEach((item, index) => { if (item === value) matched.add(index); });
-    }
+    const matched = new Set(puzzle.map((_, index) => index));
     assert.equal(hasRemainingMatch(puzzle, matched, 'equal'), false);
 });
 
@@ -149,6 +146,29 @@ test('la campagna permette fino a quattro tessere aperte contemporaneamente', ()
     assert.equal(emitted.some(({ event }) => event === 'selectionLimit'), true);
     assert.equal(
         emitted.filter(({ event }) => event === 'buttonSelected').every(({ payload }) => payload.expiresInMs === 4000),
+        true
+    );
+});
+
+test('un tris si rompe soltanto dopo la terza tessera uguale', () => {
+    const { socket, emitted, handlers } = makeHarness('triple-player');
+    handlers.pairStart.call(socket);
+    const counts = new Map();
+    socket.data.game.puzzle.forEach((value, index) => {
+        if (!counts.has(value)) counts.set(value, []);
+        counts.get(value).push(index);
+    });
+    const triple = Array.from(counts.values()).find(indices => indices.length === 3);
+
+    handlers.gameClick.call(socket, { index: triple[0] });
+    handlers.gameClick.call(socket, { index: triple[1] });
+    assert.equal(socket.data.game.matched.size, 0);
+    assert.equal(socket.data.game.selections.size, 2);
+
+    handlers.gameClick.call(socket, { index: triple[2] });
+    assert.equal(triple.every(index => socket.data.game.matched.has(index)), true);
+    assert.equal(
+        emitted.some(({ event, payload }) => event === 'pairMatched' && payload.indices.length === 3),
         true
     );
 });

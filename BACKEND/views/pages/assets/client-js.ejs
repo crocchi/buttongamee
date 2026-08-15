@@ -651,7 +651,9 @@ startGame(mode, puzzle, liv, elapsedMs = 0, config = null, lockedIndices = []){
     this.currentConfig = config;
     this.score = 0;
     this.selectedButton = null;
-    this.remainingPairs = Math.floor(puzzle.length / 2);
+    this.remainingPairs = mode === 'campain' && config && config.matchRule === 'equal'
+        ? new Set(puzzle.map(String)).size
+        : Math.floor(puzzle.length / 2);
     this.my1v1Score = 0;
     this.opp1v1Score = 0;
     this.errors = 0;
@@ -728,7 +730,7 @@ renderMission(){
         return;
     }
     const config = this.currentConfig || {};
-    const rules = [config.matchRule === 'sum10' ? 'Abbina numeri con somma 10' : 'Abbina numeri uguali'];
+    const rules = [config.matchRule === 'sum10' ? 'Abbina numeri con somma 10' : 'Trova coppie o tris di numeri uguali'];
     if(config.selectionMs) rules.push(`fino a ${config.maxSelections || 4} tessere aperte per ${(config.selectionMs / 1000).toFixed(2)}s`);
     if(config.hidden) rules.push(`memorizza in ${(config.previewMs / 1000).toFixed(1)}s`);
     if(config.exposedCount) rules.push(`${config.exposedCount} tessere restano scoperte`);
@@ -781,7 +783,7 @@ onButtonSelected({ index, by, expiresInMs = 0 }){
     }
 }
 
-onPairMatched({ indices, extraIndices, by, bonus, points, combo = 0, multiplier = 1 }){
+onPairMatched({ indices, extraIndices, by, bonus, points, combo = 0, multiplier = 1, removedGroups }){
     sfx.match();
     if(bonus === 'point') sfx.point();
     if(bonus === 'bomb') sfx.bomb();
@@ -794,13 +796,14 @@ onPairMatched({ indices, extraIndices, by, bonus, points, combo = 0, multiplier 
 
     if(bonus === 'point') this.showBonusMessage('Atom the Point: +50 punti extra!');
     if(bonus === 'bomb') this.showBonusMessage('Atom the Bomb: distrutta un\'altra coppia!');
+    if(indices.length === 3) this.showBonusMessage(`TRIS! +${points} punti`);
 
     if(this.currentMode === 'pairs-1vs1'){
         if(by === this.socket.id){ this.my1v1Score += points; } else { this.opp1v1Score += points; }
         this.remainingPairs -= (indices.length + (extraIndices || []).length) / 2;
     } else {
         this.score += points;
-        this.remainingPairs -= (indices.length + (extraIndices || []).length) / 2;
+        this.remainingPairs -= removedGroups || 1;
         this.combo = combo;
         if(multiplier > 1) this.showBonusMessage(`COMBO ×${multiplier}: +${points} punti!`);
     }
@@ -926,7 +929,7 @@ updateScoreboard(){
 
     this.gameScoreEl.innerText = `Punteggio livello: ${this.score}`;
     this.gameTotalScoreEl.innerText = `Totale: ${this.totalScore + this.score}`;
-    this.gameRemainingEl.innerText = `NUMERI RIMASTI: ${this.remainingPairs}`;
+    this.gameRemainingEl.innerText = `GRUPPI RIMASTI: ${Math.max(0, this.remainingPairs)}`;
     this.gameComboEl.innerText = this.currentConfig && this.currentConfig.combo
         ? `COMBO: ×${Math.max(1, Math.min(this.combo, 5))}`
         : 'COMBO: —';

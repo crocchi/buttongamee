@@ -75,6 +75,39 @@ function generatePuzzle(numButtons, matchRule = 'equal') {
     return shuffle(values);
 }
 
+// Campagna: usa gruppi completi da 2 o 3 tessere, senza numeri fittizi.
+// Esempio livello 1 (5 tessere): 1,1,1 + 2,2.
+function generateCampaignPuzzle(numButtons, matchRule = 'equal') {
+    const count = Math.max(2, Math.floor(Number(numButtons) || 5));
+    const tripleCount = matchRule === 'sum10'
+        ? (count % 2 ? 1 : 0)
+        : (count % 2 ? 1 : (count >= 6 ? 2 : 0));
+    const pairCount = (count - tripleCount * 3) / 2;
+    const groups = [];
+    let nextValue = 1;
+
+    for (let i = 0; i < tripleCount; i++) {
+        const value = matchRule === 'sum10' ? 5 : nextValue++;
+        groups.push([value, value, value]);
+    }
+    for (let i = 0; i < pairCount; i++) {
+        if (matchRule === 'sum10') {
+            const first = (i % 4) + 1;
+            groups.push([first, 10 - first]);
+        } else {
+            const value = nextValue++;
+            groups.push([value, value]);
+        }
+    }
+
+    const pairGroups = groups.filter(group => group.length === 2);
+    if (pairGroups.length >= 4) {
+        pairGroups[0].fill('point');
+        pairGroups[1].fill('bomb');
+    }
+    return shuffle(groups.flat());
+}
+
 function valuesMatch(first, second, rule) {
     if (first === 'point' || first === 'bomb') return first === second;
     return rule === 'sum10' ? Number(first) + Number(second) === 10 : first === second;
@@ -96,6 +129,22 @@ function hasRemainingMatch(puzzle, matched, rule) {
         }
     }
     return false;
+}
+
+function requiredGroupSize(game, index) {
+    const value = game.puzzle[index];
+    if (value === 'point' || value === 'bomb' || game.config.matchRule === 'equal') {
+        return game.puzzle.reduce((count, tile, tileIndex) =>
+            count + (!game.matched.has(tileIndex) && tile === value ? 1 : 0), 0
+        );
+    }
+    if (Number(value) === 5) {
+        const fives = game.puzzle.reduce((count, tile, tileIndex) =>
+            count + (!game.matched.has(tileIndex) && Number(tile) === 5 ? 1 : 0), 0
+        );
+        return fives >= 3 ? 3 : 2;
+    }
+    return 2;
 }
 
 function lockedIndicesForPuzzle(puzzle, count) {
@@ -366,7 +415,7 @@ module.exports = (io, main) => {
         clearCampaignDeadline(socket.data.game);
         clearSelectionTimers(socket.data.game);
         const config = levelConfig(1);
-        const puzzle = generatePuzzle(config.numButtons, config.matchRule);
+        const puzzle = generateCampaignPuzzle(config.numButtons, config.matchRule);
         const lockedIndices = lockedIndicesForPuzzle(puzzle, config.lockedCount);
         const now = Date.now();
         socket.data.game = {
@@ -592,7 +641,7 @@ module.exports = (io, main) => {
         }
 
         const config = levelConfig(nextLiv);
-        const nextPuzzle = generatePuzzle(config.numButtons, config.matchRule);
+        const nextPuzzle = generateCampaignPuzzle(config.numButtons, config.matchRule);
         const lockedIndices = lockedIndicesForPuzzle(nextPuzzle, config.lockedCount);
         socket.data.game = {
             mode: 'campain', puzzle: nextPuzzle, liv: nextLiv, totalScore, levelScore: 0,
@@ -640,18 +689,23 @@ module.exports = (io, main) => {
             selectedCount: game.selections.size, maxSelections: game.config.maxSelections,
         });
 
-        const pending = Array.from(game.selections.keys()).find(otherIndex =>
-            otherIndex !== index && valuesMatch(game.puzzle[otherIndex], game.puzzle[index], game.config.matchRule)
-        );
-        if (pending === undefined) return;
+        const requiredSize = requiredGroupSize(game, index);
+        const matchingIndices = [
+            index,
+            ...Array.from(game.selections.keys()).filter(selectedIndex =>
+                selectedIndex !== index
+                    && valuesMatch(game.puzzle[selectedIndex], game.puzzle[index], game.config.matchRule)
+            ),
+        ];
+        if (matchingIndices.length < requiredSize) return;
 
-        clearSelectedIndices(game, [pending, index]);
-        const value = game.puzzle[pending];
-        game.matched.add(pending);
-        game.matched.add(index);
+        const completedIndices = matchingIndices.slice(0, requiredSize);
+        clearSelectedIndices(game, completedIndices);
+        const value = game.puzzle[index];
+        completedIndices.forEach(matchedIndex => game.matched.add(matchedIndex));
         game.combo += 1;
         const multiplier = game.config.combo ? Math.min(game.combo, 5) : 1;
-        let points = (value === 'point' ? 60 : 10) * multiplier;
+        let points = (value === 'point' ? 60 : 10 + (completedIndices.length - 2) * 10) * multiplier;
         const bonus = value === 'point' || value === 'bomb' ? value : null;
         const extraIndices = [];
 
@@ -662,7 +716,7 @@ module.exports = (io, main) => {
                 if (!pairs.has(v)) pairs.set(v, []);
                 pairs.get(v).push(i);
             });
-            const candidates = Array.from(pairs.values()).filter(pair => pair.length >= 2);
+            const candidates = Array.from(pairs.values()).filter(pair => pair.length === 2);
             if (candidates.length) {
                 const chosen = candidates[Math.floor(Math.random() * candidates.length)].slice(0, 2);
                 clearSelectedIndices(game, chosen);
@@ -674,8 +728,8 @@ module.exports = (io, main) => {
 
         game.levelScore += points;
         socket.emit('pairMatched', {
-            indices: [pending, index], extraIndices, by: socket.id, bonus, points,
-            combo: game.combo, multiplier,
+            indices: completedIndices, extraIndices, by: socket.id, bonus, points,
+            combo: game.combo, multiplier, removedGroups: 1 + (extraIndices.length ? 1 : 0),
         });
         if (game.locked.size && game.matched.size >= 4) {
             const unlockedIndices = Array.from(game.locked);
@@ -801,6 +855,6 @@ module.exports = (io, main) => {
 };
 
 module.exports._test = {
-    levelConfig, generatePuzzle, valuesMatch, hasRemainingMatch,
+    levelConfig, generatePuzzle, generateCampaignPuzzle, valuesMatch, hasRemainingMatch,
     lockedIndicesForPuzzle, normalizeNickname, MAX_LEVEL,
 };
