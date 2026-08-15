@@ -90,8 +90,15 @@
                         <section class="leaderboard-panel">
                             <div class="panel-intro">
                                 <span class="fa-solid fa-trophy"></span>
-                                <div><h2>Classifica</h2><p>I migliori punteggi di tutte le modalità.</p></div>
+                                <div><h2>Classifica</h2><p>Seleziona un gioco e confronta i migliori risultati.</p></div>
                             </div>
+                            <div id="leaderboardTabs" class="leaderboard-tabs" role="tablist">
+                                <button type="button" data-board="numberBlast">Number Blast <small>0</small></button>
+                                <button type="button" data-board="pairs">Coppie <small>0</small></button>
+                                <button type="button" data-board="sudoku">Sudoku <small>0</small></button>
+                                <button type="button" data-board="escapeMath">Escape Math <small>0</small></button>
+                            </div>
+                            <p id="leaderboardSummary" class="leaderboard-summary"></p>
                             <ol id="statsListEl" class="leaderboard-list"></ol>
                         </section>
                     </div> 
@@ -117,6 +124,17 @@
         <div onclick="playSudoku()" class="contact">
             <div class="pic imgPlaygame sudoku-menu-icon">9</div>
             <h2>SUDOKU</h2>
+        </div>
+
+        <div onclick="toggleEscapeModes(event)" class="contact game-mode-card" id="escapeGameCard">
+            <div class="pic imgPlaygame escape-menu-icon">∑→</div>
+            <h2>ESCAPE MATH</h2>
+            <p class="mode-hint">Scegli come giocare</p>
+            <div id="escapeModeSelector" class="mode-selector hide">
+                <button type="button" onclick="playEscapeMath(event)"><span class="fa-solid fa-user"></span> SINGLE PLAYER</button>
+                <button type="button" onclick="playEscapeMath1vs1(event)"><span class="fa-solid fa-user-group"></span> 1 VS 1</button>
+                <div id="escapeWaitingPlayer" class="waiting-mode hide"><span class="fa-solid fa-hourglass-start"></span> <span id="escapeWaitingText"></span></div>
+            </div>
         </div>
 
         <div onclick="togglePairsModes(event)" class="contact game-mode-card" id="pairsGameCard">
@@ -192,8 +210,11 @@
             event.stopPropagation();
             const selector = document.getElementById('numberBlastModeSelector');
             const pairsSelector = document.getElementById('pairsModeSelector');
+            const escapeSelector = document.getElementById('escapeModeSelector');
             pairsSelector.classList.add('hide');
+            escapeSelector.classList.add('hide');
             document.getElementById('pairsGameCard').classList.remove('expanded');
+            document.getElementById('escapeGameCard').classList.remove('expanded');
             selector.classList.toggle('hide');
             document.getElementById('numberBlastGameCard').classList.toggle('expanded', !selector.classList.contains('hide'));
             }
@@ -215,12 +236,37 @@
             user.socket.emit('sudoku start');
         }
 
+        let toggleEscapeModes = (event)=>{
+            event.stopPropagation();
+            const selector = document.getElementById('escapeModeSelector');
+            ['numberBlastModeSelector', 'pairsModeSelector'].forEach(id => document.getElementById(id).classList.add('hide'));
+            document.getElementById('numberBlastGameCard').classList.remove('expanded');
+            document.getElementById('pairsGameCard').classList.remove('expanded');
+            selector.classList.toggle('hide');
+            document.getElementById('escapeGameCard').classList.toggle('expanded', !selector.classList.contains('hide'));
+        }
+
+        let playEscapeMath = (event)=>{
+            if(event) event.stopPropagation();
+            user.socket.emit('escape start');
+        }
+
+        let playEscapeMath1vs1 = (event)=>{
+            if(event) event.stopPropagation();
+            user.socket.emit('escapeOnline 1vs1', 'join');
+            document.getElementById('escapeWaitingPlayer').classList.remove('hide');
+            document.getElementById('escapeWaitingText').innerText = 'Ricerca avversario...';
+        }
+
         let togglePairsModes = (event)=>{
             event.stopPropagation();
             const selector = document.getElementById('pairsModeSelector');
             const numberBlastSelector = document.getElementById('numberBlastModeSelector');
+            const escapeSelector = document.getElementById('escapeModeSelector');
             numberBlastSelector.classList.add('hide');
+            escapeSelector.classList.add('hide');
             document.getElementById('numberBlastGameCard').classList.remove('expanded');
+            document.getElementById('escapeGameCard').classList.remove('expanded');
             selector.classList.toggle('hide');
             document.getElementById('pairsGameCard').classList.toggle('expanded', !selector.classList.contains('hide'));
         }

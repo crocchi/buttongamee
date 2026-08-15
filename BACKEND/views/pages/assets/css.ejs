@@ -1824,6 +1824,138 @@ div#modal-playGround {
     font-weight: 900;
 }
 
+.escape-menu-icon {
+    display: grid;
+    place-items: center;
+    background: linear-gradient(145deg, #2b3b52, #111820);
+    color: #7dffb2;
+    font-size: 1.2em;
+    font-weight: 900;
+}
+
+#buttonAreaH.escape-room-wrapper {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    max-height: calc(100dvh - 17em);
+    padding: 12px;
+    overflow: auto;
+}
+.escape-scene {
+    display: grid;
+    grid-template-columns: minmax(150px, 210px) minmax(280px, 480px);
+    align-items: center;
+    gap: clamp(18px, 5vw, 48px);
+    width: min(760px, 100%);
+    padding: clamp(16px, 4vw, 30px);
+    border-radius: 24px;
+    background: linear-gradient(145deg, rgba(29,44,56,.96), rgba(12,20,27,.98));
+    box-shadow: inset 0 0 40px rgba(0,0,0,.5), 0 16px 35px rgba(0,0,0,.28);
+}
+.escape-door {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 100%;
+    aspect-ratio: .72;
+    border: 9px solid #0b1117;
+    border-bottom-width: 14px;
+    border-radius: 12px 12px 3px 3px;
+    background:
+        linear-gradient(90deg, transparent 47%, rgba(255,255,255,.08) 48% 52%, transparent 53%),
+        repeating-linear-gradient(0deg, #24465a 0 28px, #1a3444 28px 31px);
+    box-shadow: inset 0 0 25px rgba(0,0,0,.65), 0 0 0 4px #526b76, 0 10px 22px rgba(0,0,0,.45);
+    overflow: hidden;
+}
+.escape-door.boss-door {
+    background:
+        linear-gradient(90deg, transparent 47%, rgba(255,230,120,.12) 48% 52%, transparent 53%),
+        repeating-linear-gradient(0deg, #5a421d 0 28px, #38270f 28px 31px);
+    box-shadow: inset 0 0 30px #000, 0 0 0 4px #d6a43b, 0 0 24px rgba(255,190,58,.45);
+}
+.door-lock {
+    display: grid;
+    place-items: center;
+    width: 68px;
+    height: 68px;
+    border: 5px solid #15232b;
+    border-radius: 50%;
+    background: #79e5a8;
+    color: #10261a;
+    font-size: 2em;
+    font-weight: 900;
+    box-shadow: 0 0 18px rgba(89,255,159,.6), inset 0 4px 8px rgba(255,255,255,.5);
+}
+.door-light {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #ff5348;
+    box-shadow: 0 0 10px #ff5348;
+}
+.escape-puzzle-card {
+    padding: clamp(16px, 4vw, 26px);
+    border-radius: 20px;
+    background: #f7fbf8;
+    color: #14261b;
+    box-shadow: 0 12px 25px rgba(0,0,0,.28);
+    text-align: center;
+}
+.escape-puzzle-card > small {
+    color: #31714a;
+    font-weight: 900;
+    letter-spacing: .14em;
+}
+.escape-question {
+    margin: .45em 0 .35em;
+    color: #14261b;
+    font-size: clamp(1.8em, 6vw, 3.2em);
+    font-weight: 900;
+    line-height: 1.15;
+}
+.escape-hint {
+    margin: 0 0 1em !important;
+    color: #52665a !important;
+    font-size: .78em;
+    font-weight: 700;
+}
+.escape-answers {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(90px, 1fr));
+    gap: 9px;
+}
+.escape-answer {
+    margin: 0;
+    padding: .75em;
+    border: 2px solid #2d7148;
+    border-radius: 14px;
+    background: #e8f6ed;
+    color: #153d26;
+    font-size: 1.25em;
+    font-weight: 900;
+    box-shadow: 0 4px 8px rgba(25,80,45,.15);
+    transition: transform .15s ease, background .15s ease, color .15s ease;
+}
+.escape-answer:hover { transform: translateY(-2px); background: #2d7148; color: #fff; }
+.escape-answer.chosen { transform: scale(.94); background: #f0b742; color: #382400; }
+.escape-room-wrapper.room-correct .escape-door { animation: doorOpen .65s ease; }
+.escape-room-wrapper.room-correct .door-light { background: #64ff91; box-shadow: 0 0 14px #64ff91; }
+.escape-room-wrapper.room-wrong .escape-scene { animation: invalidMove .3s ease; }
+.escape-room-wrapper.room-wrong .door-light { animation: specialPulse .35s ease 3 alternate; }
+@keyframes doorOpen {
+    45% { transform: perspective(500px) rotateY(-18deg); filter: brightness(1.5); }
+    to { transform: perspective(500px) rotateY(0); }
+}
+
+@media screen and (max-width: 620px) {
+    .escape-scene { grid-template-columns: 1fr; }
+    .escape-door { width: min(130px, 45vw); justify-self: center; }
+    .escape-question { font-size: clamp(1.65em, 9vw, 2.5em); }
+}
+
 .pairs-menu-icon {
     display: grid;
     place-items: center;
@@ -1979,6 +2111,8 @@ div#modal-conf-page { margin-top: 0; color: #17251d; }
     font-size: 1.35em;
 }
 .leaderboard-panel .panel-intro > span { background: linear-gradient(145deg, #ffcf4b, #d37b09); }
+.leaderboard-panel { padding: clamp(.8em, 2vw, 1.25em); }
+.leaderboard-panel .panel-intro { margin-bottom: .75em; }
 .panel-intro h2 {
     margin: 0;
     color: #17452a;
@@ -2038,21 +2172,66 @@ div#modal-conf-page { margin-top: 0; color: #17251d; }
     color: #245c36;
     font-weight: 800;
 }
+.leaderboard-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(110px, 1fr));
+    gap: 6px;
+    margin-bottom: .55em;
+    overflow-x: auto;
+}
+.leaderboard-tabs button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 0;
+    margin: 0;
+    padding: .55em .45em;
+    border: 1px solid #cbdcd0;
+    border-radius: 10px;
+    background: #eef5f0;
+    color: #294b35;
+    font-size: .72em;
+    font-weight: 900;
+    white-space: nowrap;
+}
+.leaderboard-tabs button small {
+    display: grid;
+    place-items: center;
+    min-width: 21px;
+    height: 21px;
+    padding: 0 4px;
+    border-radius: 99px;
+    background: #d6e5da;
+    color: #31543c;
+}
+.leaderboard-tabs button.active {
+    border-color: #286a42;
+    background: #286a42;
+    color: #fff;
+}
+.leaderboard-tabs button.active small { background: #fff; color: #286a42; }
+.leaderboard-summary {
+    margin: .25em 0 .5em !important;
+    color: #506358 !important;
+    font-size: .72em;
+    font-weight: 800;
+}
 .leaderboard-list {
     display: grid;
-    gap: 9px;
+    gap: 4px;
     margin: 0;
     padding: 0;
     list-style: none;
 }
 .leaderboard-item {
     display: grid;
-    grid-template-columns: 42px minmax(0,1fr) auto;
+    grid-template-columns: 34px minmax(0,1fr) auto;
     align-items: center;
-    gap: 10px;
-    padding: .8em;
+    gap: 7px;
+    padding: .22em .5em;
     border: 1px solid #dbe7de;
-    border-radius: 14px;
+    border-radius: 10px;
     background: #f7fbf8;
     color: #17251d;
 }
@@ -2060,12 +2239,13 @@ div#modal-conf-page { margin-top: 0; color: #17251d; }
 .rank {
     display: grid;
     place-items: center;
-    width: 36px;
-    height: 36px;
+    width: 26px;
+    height: 26px;
     border-radius: 50%;
     background: #286a42;
     color: #fff;
     font-weight: 900;
+    font-size: .75em;
 }
 .leaderboard-item:nth-child(1) .rank { background: #c88900; }
 .leaderboard-item:nth-child(2) .rank { background: #71808a; }
@@ -2073,7 +2253,9 @@ div#modal-conf-page { margin-top: 0; color: #17251d; }
 .leaderboard-item .player,
 .leaderboard-item .result { display: grid; min-width: 0; }
 .leaderboard-item .player strong { overflow: hidden; text-overflow: ellipsis; color: #173c27; }
-.leaderboard-item small { color: #586b5f; font-size: .72em; }
+.leaderboard-item .player strong,
+.leaderboard-item .result strong { font-size: .82em; line-height: 1.1; }
+.leaderboard-item small { color: #586b5f; font-size: .62em; line-height: 1.1; }
 .leaderboard-item .result { text-align: right; }
 .leaderboard-item .result strong { color: #994b0c; }
 .leaderboard-empty {
@@ -2088,6 +2270,9 @@ div#modal-conf-page { margin-top: 0; color: #17251d; }
 body.effects-off .buttonGame,
 body.effects-off .match3-tile,
 body.effects-off .sudoku-cell,
+body.effects-off .escape-door,
+body.effects-off .escape-scene,
+body.effects-off .escape-answer,
 body.effects-off .game-mode-card,
 body.effects-off .setting-switch,
 body.effects-off .setting-switch::after {
@@ -2096,8 +2281,9 @@ body.effects-off .setting-switch::after {
 }
 
 @media screen and (max-width: 520px) {
-    .leaderboard-item { grid-template-columns: 38px minmax(0,1fr); }
-    .leaderboard-item .result { grid-column: 2; text-align: left; }
+    .leaderboard-tabs { grid-template-columns: repeat(4, minmax(105px, 1fr)); }
+    .leaderboard-item { grid-template-columns: 30px minmax(0,1fr) auto; }
+    .leaderboard-item .result { grid-column: auto; text-align: right; }
     .setting-row { align-items: flex-start; }
 }
 

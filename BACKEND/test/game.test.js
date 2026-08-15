@@ -75,6 +75,17 @@ test('il nome classifica viene normalizzato e validato', () => {
     assert.equal(normalizeNickname('x'), null);
 });
 
+test('le classifiche separano correttamente le modalità per gioco', () => {
+    const { GAME_MODE_GROUPS } = require('../db/scoreModel');
+    assert.deepEqual(Object.keys(GAME_MODE_GROUPS), ['numberBlast', 'pairs', 'sudoku', 'escapeMath']);
+    assert.equal(GAME_MODE_GROUPS.numberBlast.includes('number-blast-1vs1'), true);
+    assert.equal(GAME_MODE_GROUPS.pairs.includes('pairs-1vs1'), true);
+    assert.deepEqual(GAME_MODE_GROUPS.sudoku, ['sudoku']);
+    assert.deepEqual(GAME_MODE_GROUPS.escapeMath, ['escape-math', 'escape-math-1vs1']);
+    const allModes = Object.values(GAME_MODE_GROUPS).flat();
+    assert.equal(new Set(allModes).size, allModes.length);
+});
+
 test('i livelli somma 10 generano soltanto coppie compatibili', () => {
     const { generatePuzzle, valuesMatch } = require('../event/game')._test;
     const puzzle = generatePuzzle(30, 'sum10');
@@ -211,4 +222,73 @@ test('Coppie 1vs1 abbina due giocatori su una griglia condivisa', () => {
     assert.equal(first.data.game.puzzle.length / 2, 100);
     assert.equal(first.data.game.scores.size, 2);
     assert.equal(emitted.filter(({ event }) => event === 'gameSet').some(({ payload }) => payload.mode === 'pairs-1vs1'), true);
+});
+
+test('Escape Math perde una vita con un errore e avanza con la risposta corretta', () => {
+    const { socket, emitted, handlers } = makeHarness('escape-player');
+    handlers.escapeStart.call(socket);
+    assert.equal(socket.data.game.mode, 'escape-math');
+    assert.equal(socket.data.game.level, 1);
+    assert.equal(socket.data.game.lives, 3);
+
+    const firstPuzzleId = socket.data.game.puzzleId;
+    const wrong = socket.data.game.puzzle.choices.find(choice => choice !== socket.data.game.puzzle.answer);
+    handlers.escapeAnswer.call(socket, { puzzleId: firstPuzzleId, answer: wrong });
+    assert.equal(socket.data.game.lives, 2);
+    assert.equal(socket.data.game.level, 1);
+
+    const answer = socket.data.game.puzzle.answer;
+    handlers.escapeAnswer.call(socket, { puzzleId: socket.data.game.puzzleId, answer });
+    assert.equal(socket.data.game.level, 2);
+    assert.equal(socket.data.game.score > 0, true);
+    assert.equal(emitted.some(({ event }) => event === 'escapeState'), true);
+});
+
+test('Escape Math 1vs1 abbina due giocatori con gli stessi dieci enigmi', () => {
+    const emitted = [];
+    const roomMembers = new Map();
+    const makeSocket = id => ({
+        id, connected: true, data: { username: id },
+        emit(event, payload) { emitted.push({ target: id, event, payload }); },
+        join(room) {
+            if (!roomMembers.has(room)) roomMembers.set(room, new Set());
+            roomMembers.get(room).add(id);
+        },
+        leave() {},
+        to() { return { emit() {} }; },
+    });
+    const first = makeSocket('escape-a');
+    const second = makeSocket('escape-b');
+    const sockets = new Map([[first.id, first], [second.id, second]]);
+    const io = {
+        sockets: { sockets },
+        to(target) {
+            return {
+                emit(event, payload) {
+                    const recipients = roomMembers.get(target) || new Set([target]);
+                    recipients.forEach(id => emitted.push({ target: id, event, payload }));
+                },
+            };
+        },
+    };
+    const handlers = require('../event/game')(io, {});
+
+    handlers.escapeOnline1vs1.call(first, 'join');
+    handlers.escapeOnline1vs1.call(second, 'join');
+
+    const game = first.data.game;
+    assert.equal(game, second.data.game);
+    assert.equal(game.mode, 'escape-math-1vs1');
+    assert.equal(game.puzzles.length, 10);
+    const starts = emitted.filter(({ event }) => event === 'escapeSet');
+    assert.equal(starts.length, 2);
+    assert.equal(starts[0].payload.prompt, starts[1].payload.prompt);
+    assert.deepEqual(starts[0].payload.choices, starts[1].payload.choices);
+
+    handlers.escapeAnswer.call(first, { puzzleId: 1, answer: game.puzzles[0].answer });
+    assert.equal(game.players.get(first.id).completed, 1);
+    assert.equal(game.players.get(second.id).completed, 0);
+    assert.equal(emitted.some(({ event }) => event === 'escapeVersusUpdate'), true);
+    clearTimeout(game.escapeTimers.get(first.id));
+    clearTimeout(game.escapeTimers.get(second.id));
 });

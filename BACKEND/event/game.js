@@ -1,10 +1,14 @@
-const { saveScore, getTopScores, updateScoreNickname } = require('../db/scoreModel');
+const { saveScore, getTopScores, getLeaderboardsByGame, updateScoreNickname } = require('../db/scoreModel');
 const { createBoard, makeMove, levelDefinition } = require('../game/match3Engine');
 const { createSudoku, isComplete } = require('../game/sudokuEngine');
+const { createEscapePuzzle } = require('../game/escapeMathEngine');
 
 // giocatori in attesa di un avversario per la modalità 1vs1
 const waitingQueue = [];
 const pairsWaitingQueue = [];
+const escapeWaitingQueue = [];
+
+const ESCAPE_VERSUS_ROUNDS = 10;
 
 // livello massimo della campagna: oltre questo la partita finisce davvero
 const MAX_LEVEL = 100;
@@ -162,6 +166,17 @@ function normalizeNickname(value) {
 
 module.exports = (io, main) => {
 
+    const clearEscapeDeadline = function (game) {
+        if (game && game.escapeTimer) {
+            clearTimeout(game.escapeTimer);
+            game.escapeTimer = null;
+        }
+        if (game && game.escapeTimers) {
+            for (const timer of game.escapeTimers.values()) clearTimeout(timer);
+            game.escapeTimers.clear();
+        }
+    };
+
     const clearSelectionTimers = function (game) {
         if (!game || !game.selections) return;
         for (const timer of game.selections.values()) clearTimeout(timer);
@@ -223,6 +238,7 @@ module.exports = (io, main) => {
 
     const gameStart = function (liv) {
         const socket = this;
+        clearEscapeDeadline(socket.data.game);
         clearCampaignDeadline(socket.data.game);
         clearSelectionTimers(socket.data.game);
         removeFromWaitingQueue(socket);
@@ -320,6 +336,7 @@ module.exports = (io, main) => {
         const socket = this;
         if (action !== 'join') return;
 
+        clearEscapeDeadline(socket.data.game);
         clearCampaignDeadline(socket.data.game);
         clearSelectionTimers(socket.data.game);
 
@@ -412,6 +429,7 @@ module.exports = (io, main) => {
     const pairStart = function () {
         const socket = this;
         removeFromWaitingQueue(socket);
+        clearEscapeDeadline(socket.data.game);
         clearCampaignDeadline(socket.data.game);
         clearSelectionTimers(socket.data.game);
         const config = levelConfig(1);
@@ -435,6 +453,7 @@ module.exports = (io, main) => {
         if (action !== 'join') return;
         if (socket.data.game && socket.data.game.mode === 'pairs-1vs1') return;
 
+        clearEscapeDeadline(socket.data.game);
         clearCampaignDeadline(socket.data.game);
         clearSelectionTimers(socket.data.game);
         removeFromWaitingQueue(socket);
@@ -749,11 +768,12 @@ module.exports = (io, main) => {
     const gameDisconnectCleanup = function () {
         const socket = this;
         removeFromWaitingQueue(socket);
+        clearEscapeDeadline(socket.data.game);
         clearCampaignDeadline(socket.data.game);
         clearSelectionTimers(socket.data.game);
 
         const game = socket.data.game;
-        if (game && ['match3-1vs1', 'pairs-1vs1'].includes(game.mode) && game.roomId && !game.decided) {
+        if (game && ['match3-1vs1', 'pairs-1vs1', 'escape-math-1vs1'].includes(game.mode) && game.roomId && !game.decided) {
             game.decided = true;
             socket.to(game.roomId).emit('gameResult', {
                 result: 'win', reason: 'opponent-disconnected', elapsedMs: Date.now() - game.startTime,
@@ -769,13 +789,303 @@ module.exports = (io, main) => {
         let idx;
         while ((idx = waitingQueue.indexOf(socket)) !== -1) waitingQueue.splice(idx, 1);
         while ((idx = pairsWaitingQueue.indexOf(socket)) !== -1) pairsWaitingQueue.splice(idx, 1);
+        while ((idx = escapeWaitingQueue.indexOf(socket)) !== -1) escapeWaitingQueue.splice(idx, 1);
     }
+
+    function escapePayload(game, feedback = {}) {
+        return {
+            mode: 'escape-math', level: game.level, score: game.score, lives: game.lives,
+            prompt: game.puzzle.prompt, choices: game.puzzle.choices, hint: game.puzzle.hint,
+            type: game.puzzle.type, boss: game.puzzle.boss,
+            timeLimitMs: game.puzzle.timeLimitMs, puzzleId: game.puzzleId,
+            elapsedMs: Date.now() - game.startTime,
+            ...feedback,
+        };
+    }
+
+    const finishEscapeMath = async function (socket, game, win, reason) {
+        if (!game || game.finishing || socket.data.game !== game) return;
+        game.finishing = true;
+        clearEscapeDeadline(game);
+        const elapsedMs = Date.now() - game.startTime;
+        try {
+            const scoreId = await saveScore({
+                nickname: socket.data.username, mode: 'escape-math', score: game.score,
+                elapsedMs, level: game.level,
+            });
+            if (!socket.data.renameableScoreIds) socket.data.renameableScoreIds = new Set();
+            socket.data.renameableScoreIds.add(scoreId);
+        } catch (e) {
+            console.error('Errore salvataggio Escape Math:', e.message);
+        }
+        socket.data.game = null;
+        socket.emit('escapeComplete', {
+            win, reason, score: game.score, level: game.level, elapsedMs,
+        });
+    };
+
+    const setEscapeDeadline = function (socket, game) {
+        clearEscapeDeadline(game);
+        game.roomStartedAt = Date.now();
+        game.escapeTimer = setTimeout(() => {
+            if (socket.data.game !== game || game.finishing) return;
+            game.lives -= 1;
+            if (game.lives <= 0) {
+                void finishEscapeMath(socket, game, false, 'timeout');
+                return;
+            }
+            game.puzzle = createEscapePuzzle(game.level);
+            game.puzzleId += 1;
+            socket.emit('escapeState', escapePayload(game, {
+                correct: false, reason: 'timeout', message: 'Tempo scaduto: hai perso una vita.',
+            }));
+            setEscapeDeadline(socket, game);
+        }, game.puzzle.timeLimitMs);
+        if (typeof game.escapeTimer.unref === 'function') game.escapeTimer.unref();
+    };
+
+    const escapeStart = function () {
+        const socket = this;
+        removeFromWaitingQueue(socket);
+        clearCampaignDeadline(socket.data.game);
+        clearSelectionTimers(socket.data.game);
+        clearEscapeDeadline(socket.data.game);
+        const puzzle = createEscapePuzzle(1);
+        socket.data.game = {
+            mode: 'escape-math', level: 1, score: 0, lives: 3, puzzle,
+            puzzleId: 1, startTime: Date.now(), roomStartedAt: Date.now(), finishing: false,
+        };
+        socket.emit('escapeSet', escapePayload(socket.data.game));
+        setEscapeDeadline(socket, socket.data.game);
+    };
+
+    function escapeVersusPayload(game, socketId, feedback = {}) {
+        const player = game.players.get(socketId);
+        const opponentEntry = Array.from(game.players.entries()).find(([id]) => id !== socketId);
+        const opponent = opponentEntry ? opponentEntry[1] : { score: 0, lives: 3, completed: 0 };
+        const puzzle = game.puzzles[player.completed] || game.puzzles[game.puzzles.length - 1];
+        return {
+            mode: 'escape-math-1vs1', level: player.completed + 1,
+            roundsTotal: ESCAPE_VERSUS_ROUNDS, score: player.score, lives: player.lives,
+            prompt: puzzle.prompt, choices: puzzle.choices, hint: puzzle.hint,
+            type: puzzle.type, boss: player.completed + 1 === ESCAPE_VERSUS_ROUNDS,
+            timeLimitMs: Math.max(0, player.deadlineAt - Date.now()),
+            puzzleId: player.completed + 1, elapsedMs: Date.now() - game.startTime,
+            playerScores: Object.fromEntries(Array.from(game.players, ([id, state]) => [id, state.score])),
+            playerProgress: Object.fromEntries(Array.from(game.players, ([id, state]) => [id, state.completed])),
+            opponentLives: opponent.lives,
+            ...feedback,
+        };
+    }
+
+    function escapeVersusUpdate(game, actorId, feedback = {}) {
+        const scores = Object.fromEntries(Array.from(game.players, ([id, state]) => [id, state.score]));
+        const progress = Object.fromEntries(Array.from(game.players, ([id, state]) => [id, state.completed]));
+        const lives = Object.fromEntries(Array.from(game.players, ([id, state]) => [id, state.lives]));
+        io.to(game.roomId).emit('escapeVersusUpdate', {
+            mode: game.mode, by: actorId, playerScores: scores, playerProgress: progress,
+            playerLives: lives, roundsTotal: ESCAPE_VERSUS_ROUNDS, ...feedback,
+        });
+    }
+
+    const finishEscapeVersus = async function (game, winnerId, reason) {
+        if (!game || game.decided) return;
+        game.decided = true;
+        clearEscapeDeadline(game);
+        const elapsedMs = Date.now() - game.startTime;
+        const entries = Array.from(game.players.entries());
+        const savedScoreIds = new Map();
+
+        for (const [id, player] of entries) {
+            const s = io.sockets.sockets.get(id);
+            try {
+                const scoreId = await saveScore({
+                    nickname: s ? s.data.username : 'anonimo', mode: 'escape-math-1vs1',
+                    score: player.score, elapsedMs, level: Math.max(1, player.completed),
+                });
+                savedScoreIds.set(id, scoreId);
+            } catch (e) {
+                console.error('Errore salvataggio Escape Math 1vs1:', e.message);
+            }
+        }
+
+        for (const [id, player] of entries) {
+            const s = io.sockets.sockets.get(id);
+            if (!s) continue;
+            const opponent = entries.find(([otherId]) => otherId !== id)[1];
+            const result = winnerId === null ? 'draw' : (id === winnerId ? 'win' : 'lose');
+            if (result === 'lose' && savedScoreIds.has(id)) {
+                if (!s.data.renameableScoreIds) s.data.renameableScoreIds = new Set();
+                s.data.renameableScoreIds.add(savedScoreIds.get(id));
+            }
+            s.emit('gameResult', {
+                result, reason, score: player.score, opponentScore: opponent.score, elapsedMs,
+            });
+            s.data.game = null;
+            s.leave(game.roomId);
+        }
+    };
+
+    const setEscapeVersusDeadline = function (game, socketId) {
+        const player = game.players.get(socketId);
+        if (!player || game.decided) return;
+        const oldTimer = game.escapeTimers.get(socketId);
+        if (oldTimer) clearTimeout(oldTimer);
+        const puzzle = game.puzzles[player.completed];
+        player.deadlineAt = Date.now() + puzzle.timeLimitMs;
+        const timer = setTimeout(() => {
+            if (game.decided) return;
+            const s = io.sockets.sockets.get(socketId);
+            if (!s || s.data.game !== game) return;
+            player.lives -= 1;
+            if (player.lives <= 0) {
+                const winnerId = Array.from(game.players.keys()).find(id => id !== socketId);
+                escapeVersusUpdate(game, socketId, { correct: false, reason: 'timeout' });
+                void finishEscapeVersus(game, winnerId, 'opponent-out-of-lives');
+                return;
+            }
+            setEscapeVersusDeadline(game, socketId);
+            s.emit('escapeState', escapeVersusPayload(game, socketId, {
+                correct: false, reason: 'timeout', message: 'Tempo scaduto: hai perso una vita.',
+            }));
+            escapeVersusUpdate(game, socketId, { correct: false, reason: 'timeout' });
+        }, puzzle.timeLimitMs);
+        if (typeof timer.unref === 'function') timer.unref();
+        game.escapeTimers.set(socketId, timer);
+    };
+
+    const escapeOnline1vs1 = function (action) {
+        const socket = this;
+        if (action !== 'join') return;
+        if (socket.data.game && socket.data.game.mode === 'escape-math-1vs1') return;
+        removeFromWaitingQueue(socket);
+        clearEscapeDeadline(socket.data.game);
+        clearCampaignDeadline(socket.data.game);
+        clearSelectionTimers(socket.data.game);
+
+        let opponent;
+        while (escapeWaitingQueue.length && !opponent) {
+            const candidate = escapeWaitingQueue.shift();
+            if (candidate !== socket && candidate.connected && !candidate.data.game) opponent = candidate;
+        }
+        if (!opponent) {
+            escapeWaitingQueue.push(socket);
+            socket.emit('gameSet', { mode: 'escape-math-1vs1-wait', data: 'In attesa di un avversario...' });
+            return;
+        }
+
+        const roomId = `escape-room-${opponent.id}-${socket.id}`;
+        socket.join(roomId);
+        opponent.join(roomId);
+        const game = {
+            mode: 'escape-math-1vs1', roomId, startTime: Date.now(), decided: false,
+            puzzles: Array.from({ length: ESCAPE_VERSUS_ROUNDS }, (_, index) => createEscapePuzzle(index + 1)),
+            players: new Map([
+                [socket.id, { score: 0, lives: 3, completed: 0, deadlineAt: 0 }],
+                [opponent.id, { score: 0, lives: 3, completed: 0, deadlineAt: 0 }],
+            ]),
+            scores: new Map([[socket.id, 0], [opponent.id, 0]]),
+            escapeTimers: new Map(),
+        };
+        socket.data.game = game;
+        opponent.data.game = game;
+        for (const id of game.players.keys()) setEscapeVersusDeadline(game, id);
+        socket.emit('escapeSet', escapeVersusPayload(game, socket.id));
+        opponent.emit('escapeSet', escapeVersusPayload(game, opponent.id));
+    };
+
+    const escapeAnswer = function (payload) {
+        const socket = this;
+        const game = socket.data.game;
+        if (!game || !['escape-math', 'escape-math-1vs1'].includes(game.mode) || game.finishing || game.decided) return;
+
+        if (game.mode === 'escape-math-1vs1') {
+            const player = game.players.get(socket.id);
+            if (!player || Number(payload && payload.puzzleId) !== player.completed + 1) return;
+            const answer = Number(payload && payload.answer);
+            if (!Number.isFinite(answer)) return;
+            const puzzle = game.puzzles[player.completed];
+            const timer = game.escapeTimers.get(socket.id);
+            if (timer) clearTimeout(timer);
+            game.escapeTimers.delete(socket.id);
+
+            if (answer !== puzzle.answer) {
+                player.lives -= 1;
+                if (player.lives <= 0) {
+                    const winnerId = Array.from(game.players.keys()).find(id => id !== socket.id);
+                    escapeVersusUpdate(game, socket.id, { correct: false, reason: 'wrong' });
+                    void finishEscapeVersus(game, winnerId, 'opponent-out-of-lives');
+                    return;
+                }
+                setEscapeVersusDeadline(game, socket.id);
+                socket.emit('escapeState', escapeVersusPayload(game, socket.id, {
+                    correct: false, reason: 'wrong', message: 'Risposta errata: hai perso una vita.',
+                }));
+                escapeVersusUpdate(game, socket.id, { correct: false, reason: 'wrong' });
+                return;
+            }
+
+            const remainingMs = Math.max(0, player.deadlineAt - Date.now());
+            const gained = 100 + (player.completed + 1) * 10 + Math.floor(remainingMs / 100);
+            player.score += gained;
+            player.completed += 1;
+            game.scores.set(socket.id, player.score);
+            escapeVersusUpdate(game, socket.id, { correct: true, gained });
+            if (player.completed >= ESCAPE_VERSUS_ROUNDS) {
+                void finishEscapeVersus(game, socket.id, 'escaped-first');
+                return;
+            }
+            setEscapeVersusDeadline(game, socket.id);
+            socket.emit('escapeState', escapeVersusPayload(game, socket.id, {
+                correct: true, gained, completedLevel: player.completed,
+                message: `Porta ${player.completed} aperta! +${gained} punti`,
+            }));
+            return;
+        }
+
+        if (Number(payload && payload.puzzleId) !== game.puzzleId) return;
+        const answer = Number(payload && payload.answer);
+        if (!Number.isFinite(answer)) return;
+
+        clearEscapeDeadline(game);
+        if (answer !== game.puzzle.answer) {
+            game.lives -= 1;
+            if (game.lives <= 0) {
+                void finishEscapeMath(socket, game, false, 'lives');
+                return;
+            }
+            game.puzzle = createEscapePuzzle(game.level);
+            game.puzzleId += 1;
+            socket.emit('escapeState', escapePayload(game, {
+                correct: false, reason: 'wrong', message: 'Risposta errata: hai perso una vita.',
+            }));
+            setEscapeDeadline(socket, game);
+            return;
+        }
+
+        const remainingMs = Math.max(0, game.puzzle.timeLimitMs - (Date.now() - game.roomStartedAt));
+        const gained = 100 + game.level * 10 + Math.floor(remainingMs / 100);
+        game.score += gained;
+        const completedLevel = game.level;
+        if (completedLevel >= 100) {
+            void finishEscapeMath(socket, game, true, 'escaped');
+            return;
+        }
+        game.level += 1;
+        game.puzzle = createEscapePuzzle(game.level);
+        game.puzzleId += 1;
+        socket.emit('escapeState', escapePayload(game, {
+            correct: true, gained, completedLevel,
+            message: `Porta ${completedLevel} aperta! +${gained} punti`,
+        }));
+        setEscapeDeadline(socket, game);
+    };
 
     const statsRequest = async function () {
         const socket = this;
         try {
-            const topScores = await getTopScores();
-            io.to(socket.id).emit('statsData', topScores);
+            const leaderboards = await getLeaderboardsByGame(30);
+            io.to(socket.id).emit('statsData', { groups: leaderboards });
         } catch (e) {
             console.error('Errore lettura classifica:', e.message);
         }
@@ -784,6 +1094,7 @@ module.exports = (io, main) => {
     const sudokuStart = function () {
         const socket = this;
         removeFromWaitingQueue(socket);
+        clearEscapeDeadline(socket.data.game);
         clearCampaignDeadline(socket.data.game);
         clearSelectionTimers(socket.data.game);
         const { puzzle, solution } = createSudoku(42);
@@ -851,10 +1162,11 @@ module.exports = (io, main) => {
         statsRequest, setScoreNickname, match3Move,
         sudokuStart, sudokuInput,
         pairStart, pairOnline1vs1,
+        escapeStart, escapeOnline1vs1, escapeAnswer,
     };
 };
 
 module.exports._test = {
     levelConfig, generatePuzzle, generateCampaignPuzzle, valuesMatch, hasRemainingMatch,
-    lockedIndicesForPuzzle, normalizeNickname, MAX_LEVEL,
+    lockedIndicesForPuzzle, normalizeNickname, MAX_LEVEL, ESCAPE_VERSUS_ROUNDS,
 };

@@ -159,7 +159,13 @@ waitingPlayer = this.getEl('waitingplayer');
 waitingPlayerText = this.getEl('waitingplayerText');
 pairsWaitingPlayer = this.getEl('pairsWaitingPlayer');
 pairsWaitingText = this.getEl('pairsWaitingText');
+escapeWaitingPlayer = this.getEl('escapeWaitingPlayer');
+escapeWaitingText = this.getEl('escapeWaitingText');
 statsListEl = this.getEl('statsListEl');
+leaderboardTabsEl = this.getEl('leaderboardTabs');
+leaderboardSummaryEl = this.getEl('leaderboardSummary');
+statsGroups = null;
+activeStatsGroup = 'numberBlast';
 
 // STATO PARTITA IN CORSO
 selectedButton = null;
@@ -182,6 +188,8 @@ sudokuSelected = null;
 errors = 0;
 combo = 0;
 concealTimeout = null;
+escapeDeadlineAt = 0;
+escapePuzzleId = null;
 
 constructor(){
     super();
@@ -294,6 +302,10 @@ bindGameEvents(){
     this.socket.on('sudokuSet', (payload) => this.setupSudoku(payload));
     this.socket.on('sudokuCell', (payload) => this.onSudokuCell(payload));
     this.socket.on('sudokuComplete', (payload) => this.onSudokuComplete(payload));
+    this.socket.on('escapeSet', (payload) => this.setupEscapeMath(payload));
+    this.socket.on('escapeState', (payload) => this.setupEscapeMath(payload));
+    this.socket.on('escapeVersusUpdate', (payload) => this.onEscapeVersusUpdate(payload));
+    this.socket.on('escapeComplete', (payload) => this.onEscapeComplete(payload));
     this.socket.on('pairsComplete', (payload) => this.onPairsComplete(payload));
     this.socket.on('statsData', (rows) => this.renderStats(rows));
 }
@@ -306,23 +318,19 @@ onGameSet(payload){
         return;
     }
 
-    if(mode === '1vs1-wait' || mode === 'pairs-1vs1-wait'){
+    if(mode === '1vs1-wait' || mode === 'pairs-1vs1-wait' || mode === 'escape-math-1vs1-wait'){
         const isPairsWaiting = mode === 'pairs-1vs1-wait';
-        const waitingBox = isPairsWaiting ? this.pairsWaitingPlayer : this.waitingPlayer;
-        const waitingText = isPairsWaiting ? this.pairsWaitingText : this.waitingPlayerText;
+        const isEscapeWaiting = mode === 'escape-math-1vs1-wait';
+        const waitingBox = isEscapeWaiting ? this.escapeWaitingPlayer : (isPairsWaiting ? this.pairsWaitingPlayer : this.waitingPlayer);
+        const waitingText = isEscapeWaiting ? this.escapeWaitingText : (isPairsWaiting ? this.pairsWaitingText : this.waitingPlayerText);
         if(waitingBox && waitingBox.classList.contains('hide')) waitingBox.classList.remove('hide');
         if(waitingText) waitingText.innerText = data;
-        if(isPairsWaiting && this.waitingPlayer) this.waitingPlayer.classList.add('hide');
-        if(!isPairsWaiting && this.pairsWaitingPlayer) this.pairsWaitingPlayer.classList.add('hide');
+        [this.waitingPlayer, this.pairsWaitingPlayer, this.escapeWaitingPlayer]
+            .filter(box => box && box !== waitingBox).forEach(box => box.classList.add('hide'));
         return;
     }
 
-    if(!this.waitingPlayer.classList.contains('hide')){
-        this.waitingPlayer.classList.toggle('hide');
-    }
-    if(this.pairsWaitingPlayer && !this.pairsWaitingPlayer.classList.contains('hide')){
-        this.pairsWaitingPlayer.classList.add('hide');
-    }
+    this.hideWaitingIndicators();
 
     if(levelComplete){
         // livello superato: si continua subito col livello successivo, niente ritorno al menu
@@ -334,6 +342,17 @@ onGameSet(payload){
     }
 
     this.startGame(mode, puzzle, liv, elapsedMs, config, lockedIndices);
+}
+
+hideWaitingIndicators(){
+    [
+        [this.waitingPlayer, this.waitingPlayerText],
+        [this.pairsWaitingPlayer, this.pairsWaitingText],
+        [this.escapeWaitingPlayer, this.escapeWaitingText],
+    ].forEach(([box, text]) => {
+        if(box) box.classList.add('hide');
+        if(text) text.textContent = '';
+    });
 }
 
 // icone dei bonus originali del gioco: Atom the Point (punti extra) e Atom the Bomb (distrugge un'altra coppia)
@@ -633,6 +652,114 @@ onSudokuComplete({ score, elapsedMs, errors }){
     this.startTime = Date.now() - elapsedMs;
     this.renderTimer();
     alert(`Sudoku completato! Punteggio: ${score} · Errori: ${errors}`);
+    this.openPag('game');
+    this.requestPlayerName();
+}
+
+setupEscapeMath(payload){
+    const {
+        level, score = 0, lives = 3, prompt, choices = [], hint, type,
+        boss = false, timeLimitMs = 30000, puzzleId, elapsedMs = 0,
+        correct, message, gained, mode = 'escape-math', roundsTotal = 100,
+        playerScores = {}, playerProgress = {}, opponentLives = 3,
+    } = payload;
+    const multiplayer = mode === 'escape-math-1vs1';
+    this.hideWaitingIndicators();
+    this.currentMode = mode;
+    this.currentConfig = null;
+    this.escapePuzzleId = puzzleId;
+    this.escapeDeadlineAt = Date.now() + timeLimitMs;
+    this.startTimer(elapsedMs);
+    const opponentId = Object.keys(playerScores).find(id => id !== this.socket.id);
+    const myScore = playerScores[this.socket.id] ?? score;
+    const rivalScore = opponentId ? (playerScores[opponentId] || 0) : 0;
+    const myProgress = playerProgress[this.socket.id] || Math.max(0, level - 1);
+    const rivalProgress = opponentId ? (playerProgress[opponentId] || 0) : 0;
+    this.gameLevelEl.textContent = multiplayer
+        ? `ESCAPE MATH · 1 VS 1 · PORTA ${level}/${roundsTotal}`
+        : `ESCAPE MATH · STANZA ${level}/100${boss ? ' · BOSS' : ''}`;
+    this.gameMissionEl.textContent = multiplayer
+        ? 'Stessi enigmi: apri per primo tutte le 10 porte'
+        : 'Scegli la risposta corretta prima che la porta si blocchi';
+    this.gameScoreEl.textContent = multiplayer ? `TU: ${myScore}` : `PUNTEGGIO: ${score}`;
+    this.gameTotalScoreEl.textContent = multiplayer ? `AVVERSARIO: ${rivalScore}` : (gained ? `ULTIMA PORTA: +${gained}` : '');
+    this.gameRemainingEl.textContent = multiplayer
+        ? `VITE TU: ${lives} · RIVALE: ${opponentLives}`
+        : `VITE: ${'♥'.repeat(lives)}${'♡'.repeat(Math.max(0, 3 - lives))}`;
+    this.gameComboEl.textContent = multiplayer ? `PORTE: ${myProgress}–${rivalProgress}` : (boss ? 'STANZA BOSS' : `PORTA ${level}`);
+    this.gameErrorsEl.textContent = '';
+    this.buttonArea.className = `escape-room-wrapper${correct === true ? ' room-correct' : (correct === false ? ' room-wrong' : '')}`;
+    this.buttonArea.replaceChildren();
+
+    const scene = document.createElement('section');
+    scene.className = 'escape-scene';
+    const door = document.createElement('div');
+    door.className = `escape-door${boss ? ' boss-door' : ''}`;
+    door.innerHTML = '<span class="door-lock">∑</span><i class="door-light"></i>';
+
+    const puzzle = document.createElement('div');
+    puzzle.className = 'escape-puzzle-card';
+    const labels = {
+        'add-sub': 'OPERAZIONE', 'mult-div': 'CALCOLO', sequence: 'SEQUENZA',
+        target: 'NUMERO OBIETTIVO', expression: 'ESPRESSIONE',
+    };
+    const typeLabel = document.createElement('small');
+    typeLabel.textContent = labels[type] || 'ENIGMA';
+    const question = document.createElement('div');
+    question.className = 'escape-question';
+    question.textContent = prompt;
+    const hintEl = document.createElement('p');
+    hintEl.className = 'escape-hint';
+    hintEl.textContent = `INDIZIO: ${hint}`;
+    const answerArea = document.createElement('div');
+    answerArea.className = 'escape-answers';
+    choices.forEach(value => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'escape-answer';
+        button.textContent = value;
+        button.dataset.answer = value;
+        button.onclick = () => {
+            answerArea.querySelectorAll('button').forEach(choice => { choice.disabled = true; });
+            button.classList.add('chosen');
+            this.socket.emit('escape answer', { answer: value, puzzleId: this.escapePuzzleId });
+        };
+        answerArea.appendChild(button);
+    });
+    puzzle.append(typeLabel, question, hintEl, answerArea);
+    scene.append(door, puzzle);
+    this.buttonArea.appendChild(scene);
+    this.openPag('gameArea');
+
+    if(correct === true){ sfx.levelUp(); this.showBonusMessage(message || 'Porta aperta!'); }
+    if(correct === false){ sfx.wrong(); this.showBonusMessage(message || 'Risposta errata'); }
+}
+
+onEscapeVersusUpdate({ playerScores = {}, playerProgress = {}, playerLives = {}, roundsTotal = 10, by, correct, gained }){
+    if(this.currentMode !== 'escape-math-1vs1') return;
+    const opponentId = Object.keys(playerScores).find(id => id !== this.socket.id);
+    const myScore = playerScores[this.socket.id] || 0;
+    const opponentScore = opponentId ? (playerScores[opponentId] || 0) : 0;
+    const myProgress = playerProgress[this.socket.id] || 0;
+    const opponentProgress = opponentId ? (playerProgress[opponentId] || 0) : 0;
+    this.gameScoreEl.textContent = `TU: ${myScore}`;
+    this.gameTotalScoreEl.textContent = `AVVERSARIO: ${opponentScore}`;
+    this.gameRemainingEl.textContent = `VITE TU: ${playerLives[this.socket.id] ?? 3} · RIVALE: ${opponentId ? (playerLives[opponentId] ?? 3) : 3}`;
+    this.gameComboEl.textContent = `PORTE: ${myProgress}–${opponentProgress} / ${roundsTotal}`;
+    if(by !== this.socket.id){
+        if(correct) this.showBonusMessage(`L'avversario ha aperto una porta${gained ? ` (+${gained})` : ''}`);
+        else if(correct === false) this.showBonusMessage("L'avversario ha perso una vita");
+    }
+}
+
+onEscapeComplete({ win, reason, score, level, elapsedMs }){
+    this.stopTimer();
+    this.startTime = Date.now() - elapsedMs;
+    this.renderTimer();
+    const message = win
+        ? `Sei fuggito da tutte le 100 stanze! Punteggio: ${score}`
+        : `${reason === 'timeout' ? 'Tempo scaduto' : 'Vite terminate'} alla stanza ${level}. Punteggio: ${score}`;
+    alert(message);
     this.openPag('game');
     this.requestPlayerName();
 }
@@ -968,6 +1095,12 @@ renderTimer(){
             const remainingTenths = Math.floor((remainingMs % 1000) / 100);
             this.gameDeadlineEl.textContent = `LIMITE: ${String(remainingMinutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}.${remainingTenths}`;
             this.gameDeadlineEl.classList.toggle('danger', remainingMs <= 10000);
+        } else if(this.currentMode === 'escape-math' || this.currentMode === 'escape-math-1vs1') {
+            const remainingMs = Math.max(0, this.escapeDeadlineAt - Date.now());
+            const remainingSeconds = Math.floor(remainingMs / 1000);
+            const remainingTenths = Math.floor((remainingMs % 1000) / 100);
+            this.gameDeadlineEl.textContent = `PORTA: ${remainingSeconds}.${remainingTenths}s`;
+            this.gameDeadlineEl.classList.toggle('danger', remainingMs <= 5000);
         } else if(this.currentMode === 'match3' || this.currentMode === 'match3-1vs1') {
             this.gameDeadlineEl.textContent = 'MODALITÀ: MOSSE';
             this.gameDeadlineEl.classList.remove('danger');
@@ -1000,6 +1133,7 @@ onCampaignLost({ score, elapsedMs, liv, reason }){
 
 onGameResult({ result, reason, score, opponentScore, elapsedMs }){
     this.stopTimer();
+    this.hideWaitingIndicators();
     if(elapsedMs !== undefined){
         this.startTime = Date.now() - elapsedMs;
         this.renderTimer();
@@ -1032,8 +1166,45 @@ onNicknameResult({ ok, nickname, error }){
     this.showBonusMessage(`Punteggio salvato come ${nickname}`);
 }
 
-renderStats(rows){
-    if(!rows || !this.statsListEl) return;
+renderStats(data){
+    if(!data || !this.statsListEl) return;
+    this.statsGroups = Array.isArray(data)
+        ? { numberBlast: data, pairs: [], sudoku: [], escapeMath: [] }
+        : (data.groups || data);
+    const labels = {
+        numberBlast: 'Number Blast', pairs: 'Coppie di numeri',
+        sudoku: 'Sudoku', escapeMath: 'Escape Math',
+    };
+    if(this.leaderboardTabsEl){
+        this.leaderboardTabsEl.querySelectorAll('button[data-board]').forEach(button => {
+            const key = button.dataset.board;
+            const rows = this.statsGroups[key] || [];
+            const count = button.querySelector('small');
+            if(count) count.textContent = rows.length;
+            button.classList.toggle('active', key === this.activeStatsGroup);
+            button.setAttribute('aria-selected', key === this.activeStatsGroup ? 'true' : 'false');
+            button.onclick = () => {
+                this.activeStatsGroup = key;
+                this.renderStatsGroup(key, labels[key]);
+            };
+        });
+    }
+    this.renderStatsGroup(this.activeStatsGroup, labels[this.activeStatsGroup]);
+}
+
+renderStatsGroup(key, label){
+    if(!this.statsGroups || !this.statsListEl) return;
+    const rows = this.statsGroups[key] || [];
+    if(this.leaderboardSummaryEl){
+        this.leaderboardSummaryEl.textContent = `${label || key} · ${rows.length} ${rows.length === 1 ? 'giocatore mostrato' : 'giocatori mostrati'}`;
+    }
+    if(this.leaderboardTabsEl){
+        this.leaderboardTabsEl.querySelectorAll('button[data-board]').forEach(button => {
+            const active = button.dataset.board === key;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+    }
     this.statsListEl.replaceChildren();
     rows.forEach((r, i) => {
         const item = document.createElement('li');
@@ -1044,9 +1215,10 @@ renderStats(rows){
             'pairs': 'Coppie · Single', 'pairs-1vs1': 'Coppie · 1 vs 1',
             'number-blast-1vs1': 'Number Blast · 1 vs 1', 'campaign-total': 'Number Blast',
             'campain': 'Coppie · Campagna', '1vs1': 'Coppie · 1 vs 1', 'sudoku': 'Sudoku',
+            'escape-math': 'Escape Math · Single', 'escape-math-1vs1': 'Escape Math · 1 vs 1',
         };
         item.className = 'leaderboard-item';
-        item.innerHTML = `<span class="rank">${i + 1}</span><span class="player"><strong></strong><small></small></span><span class="result"><strong>${Number(r.score) || 0} pt</strong><small>${minutes}:${String(seconds).padStart(2, '0')} · Liv. ${Number(r.level) || 1}</small></span>`;
+        item.innerHTML = `<span class="rank">${i + 1}</span><span class="player"><strong></strong><small></small></span><span class="result"><strong>${Number(r.score) || 0} pt</strong><small>${minutes}:${String(seconds).padStart(2, '0')} · L${Number(r.level) || 1}</small></span>`;
         item.querySelector('.player strong').textContent = r.nickname || 'Giocatore';
         item.querySelector('.player small').textContent = modeNames[r.mode] || r.mode || 'Gioco';
         this.statsListEl.appendChild(item);

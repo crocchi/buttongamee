@@ -71,6 +71,7 @@ class Main{
             match3Move,
             sudokuStart, sudokuInput,
             pairStart, pairOnline1vs1,
+            escapeStart, escapeOnline1vs1, escapeAnswer,
         } = require("./event/game")(this.io, this);
 
         //SOCKET.IO EVENT HANDLER
@@ -93,6 +94,9 @@ class Main{
             socket.on("sudoku input", sudokuInput);
             socket.on("pairs start", pairStart);
             socket.on("pairsOnline 1vs1", pairOnline1vs1);
+            socket.on("escape start", escapeStart);
+            socket.on("escapeOnline 1vs1", escapeOnline1vs1);
+            socket.on("escape answer", escapeAnswer);
           }
 
         this.io.on("connection", this.onConnection);
