@@ -16,4 +16,12 @@ async function getTopScores(limit = 10) {
     return rows;
 }
 
-module.exports = { saveScore, getTopScores };
+async function updateScoreNickname(id, nickname) {
+    const [result] = await pool.query(
+        'UPDATE scores SET nickname = ? WHERE id = ?',
+        [nickname, id]
+    );
+    return result.affectedRows === 1;
+}
+
+module.exports = { saveScore, getTopScores, updateScoreNickname };

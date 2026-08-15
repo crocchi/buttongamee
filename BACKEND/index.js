@@ -65,7 +65,11 @@ class Main{
         this.io.engine.use(sessionMiddleware);
 
         const userSign = require("./event/account");
-        const { gameStart, gameOnline1vs1, gameClick, gameOver, gameDisconnectCleanup, statsRequest } = require("./event/game")(this.io, this);
+        const {
+            gameStart, gameOnline1vs1, gameClick, gameOver, gameDisconnectCleanup,
+            statsRequest, setScoreNickname,
+            match3Move,
+        } = require("./event/game")(this.io, this);
 
         //SOCKET.IO EVENT HANDLER
         this.onConnection = (socket) => {
@@ -81,6 +85,8 @@ class Main{
             socket.on("game click", gameClick);
             socket.on("game over", gameOver); // compatibilità: il server ignora punteggi client
             socket.on("stats request", statsRequest);
+            socket.on("set score nickname", setScoreNickname);
+            socket.on("match3 move", match3Move);
           }
 
         this.io.on("connection", this.onConnection);

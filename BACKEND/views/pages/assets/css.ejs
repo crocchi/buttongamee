@@ -1510,7 +1510,11 @@ user {
     font-size: 24px;
     height: 60px;
     width: 60px;
-    box-shadow: 0px 0px 2px 0px black; 
+    flex: 0 0 60px;
+    margin: 0;
+    box-shadow: 0px 0px 2px 0px black;
+    transition: width 0.2s ease, height 0.2s ease, flex-basis 0.2s ease,
+                box-shadow 0.2s ease, filter 0.2s ease, opacity 0.2s ease;
 }
 
 .numero{
@@ -1518,8 +1522,13 @@ user {
 }
 
 .buttonGame.selected {
-    outline: 4px solid #fff;
-    transform: scale(1.08);
+    width: 72px;
+    height: 72px;
+    flex-basis: 72px;
+    border-color: #fff;
+    box-shadow: 0 0 0 4px #fff, 0 8px 18px rgba(0, 0, 0, 0.4);
+    filter: brightness(1.15);
+    z-index: 2;
 }
 
 /* effetto "esplosione" quando una coppia viene accoppiata */
@@ -1535,19 +1544,94 @@ user {
 }
 
 .buttonGame.wrong {
-    outline: 4px solid #d11;
+    box-shadow: 0 0 0 4px #d11, 0 8px 18px rgba(0, 0, 0, 0.4);
 }
 
 /* 1vs1: bottone preso dall'avversario, non selezionabile finché non si risolve */
 .buttonGame.locked {
-    outline: 4px solid #888;
+    box-shadow: 0 0 0 4px #888;
     opacity: 0.55;
     cursor: not-allowed;
+}
+
+.buttonGame.level-locked {
+    background: repeating-linear-gradient(135deg, #1c2228 0 8px, #39434c 8px 16px) !important;
+    box-shadow: inset 0 0 0 3px #111, 0 0 0 2px #d7a92d;
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.buttonGame.level-locked .numero,
+.buttonGame.level-locked .bonusImg {
+    visibility: hidden;
 }
 
 #gameInfo {
     margin-bottom: 1em;
     font-size: 1.1em;
+}
+
+#gameMission {
+    margin: 0.25em 0 0.6em;
+    color: #203a27;
+    font-size: 0.82em;
+    font-weight: 700;
+}
+
+#gameCombo,
+#gameErrors {
+    display: inline-block;
+    min-width: 5.5em;
+    font-variant-numeric: tabular-nums;
+}
+
+.buttonGame.concealed:not(.selected):not(.locked):not(.level-locked) .numero,
+.buttonGame.concealed:not(.selected):not(.locked):not(.level-locked) .bonusImg {
+    visibility: hidden;
+}
+
+.buttonGame.concealed:not(.selected):not(.locked):not(.level-locked) {
+    background-color: #26323b !important;
+    background-image: linear-gradient(135deg, #465867, #202a32);
+}
+
+.buttonGame.always-visible {
+    box-shadow: 0 0 0 2px rgba(255, 213, 74, 0.9), 0 0 12px rgba(255, 213, 74, 0.45);
+}
+
+#buttonAreaH.previewing {
+    box-shadow: inset 0 0 20px rgba(255, 213, 74, 0.45);
+}
+
+#gameTimer {
+    display: inline-block;
+    min-width: 8.5em;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    transition: color 0.25s ease, text-shadow 0.25s ease;
+}
+
+#gameDeadline {
+    display: inline-block;
+    min-width: 8.5em;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
+#gameDeadline.danger {
+    color: #ff5b5b;
+    text-shadow: 0 0 8px rgba(255, 40, 40, 0.65);
+}
+
+#gameTimer.warning {
+    color: #ffd54a;
+}
+
+#gameTimer.danger {
+    color: #ff5b5b;
+    text-shadow: 0 0 8px rgba(255, 40, 40, 0.65);
 }
 
 .buttonGame.bonus {
@@ -1593,8 +1677,83 @@ div#modal-playGround {
     height: 80%;
 }
 #buttonAreaH {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    align-content: flex-start;
+    justify-content: center;
+    gap: 12px;
+    padding: 10px;
+    overflow-x: hidden;
     overflow-y: auto;
     max-height: 60vh;
+}
+
+#buttonAreaH.match3-board {
+    --board-size: 6;
+    display: grid;
+    grid-template-columns: repeat(var(--board-size), minmax(42px, 64px));
+    justify-content: center;
+    align-items: center;
+    gap: 7px;
+    max-height: 60vh;
+    padding: 14px;
+    overflow: auto;
+    perspective: 700px;
+    position: relative;
+}
+
+.match3-tile {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1;
+    min-width: 0;
+    border: 2px solid rgba(255,255,255,0.7);
+    border-radius: 20%;
+    color: #fff;
+    font-size: clamp(18px, 3vw, 28px);
+    font-weight: 900;
+    text-shadow: 0 2px 2px rgba(0,0,0,0.45);
+    box-shadow: inset 0 4px 8px rgba(255,255,255,0.35), 0 4px 8px rgba(0,0,0,0.3);
+    transition: transform .18s ease, filter .18s ease, box-shadow .18s ease;
+}
+
+.match3-tile:hover { transform: translateY(-2px); filter: brightness(1.12); }
+.match3-tile.selected {
+    transform: scale(1.14);
+    box-shadow: 0 0 0 4px #fff, 0 8px 18px rgba(0,0,0,.45);
+    z-index: 3;
+}
+.match3-tile b { position: absolute; right: 4px; bottom: 1px; color: #fff36a; font-size: .65em; }
+.match3-tile.special-bomb { border-radius: 50%; animation: specialPulse 1s ease-in-out infinite alternate; }
+.match3-tile.tile-1 { background: linear-gradient(145deg,#ff7676,#c52c3c); }
+.match3-tile.tile-2 { background: linear-gradient(145deg,#ffbd59,#d57800); }
+.match3-tile.tile-3 { background: linear-gradient(145deg,#ffe867,#b7a000); }
+.match3-tile.tile-4 { background: linear-gradient(145deg,#6ddc88,#16823b); }
+.match3-tile.tile-5 { background: linear-gradient(145deg,#61bfff,#1769a8); }
+.match3-tile.tile-6 { background: linear-gradient(145deg,#c184ff,#7134ac); }
+.match3-board.resolving .match3-tile { pointer-events: none; }
+.match3-board.invalid-move { animation: invalidMove .28s ease; }
+
+.match3-particle {
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 10;
+    box-shadow: 0 0 7px rgba(255,255,255,.9);
+}
+
+@keyframes invalidMove { 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+@keyframes specialPulse { to { box-shadow: 0 0 18px #fff36a, inset 0 0 12px rgba(255,255,255,.7); } }
+
+@media screen and (max-width: 600px) {
+    #buttonAreaH.match3-board {
+        grid-template-columns: repeat(var(--board-size), minmax(32px, 1fr));
+        gap: 4px;
+        padding: 8px 2px;
+    }
 }
 .starr{
     background-repeat: no-repeat;

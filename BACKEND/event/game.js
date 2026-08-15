@@ -1,10 +1,11 @@
-const { saveScore, getTopScores } = require('../db/scoreModel');
+const { saveScore, getTopScores, updateScoreNickname } = require('../db/scoreModel');
+const { createBoard, makeMove, levelDefinition } = require('../game/match3Engine');
 
 // giocatori in attesa di un avversario per la modalità 1vs1
 const waitingQueue = [];
 
 // livello massimo della campagna: oltre questo la partita finisce davvero
-const MAX_LEVEL = 6;
+const MAX_LEVEL = 100;
 
 function shuffle(array) {
     for (let i = array.length - 1; i > 0; i--) {
@@ -16,17 +17,46 @@ function shuffle(array) {
 
 // più si sale di livello più bottoni ci sono (difficoltà crescente), fino a un tetto massimo
 function numButtonsForLevel(liv) {
-    return Math.min(12 + (Math.max(1, liv) - 1) * 4, 30);
+    return Math.min(12 + Math.floor((Math.max(1, liv) - 1) / 2) * 2, 30);
+}
+
+function levelConfig(liv) {
+    const level = Math.min(MAX_LEVEL, Math.max(1, Number(liv) || 1));
+    const world = Math.ceil(level / 10);
+    const boss = level % 10 === 0;
+    return {
+        level,
+        world,
+        boss,
+        numButtons: numButtonsForLevel(level),
+        previewMs: world === 2
+            ? 15000 - (level - 11) * 1000
+            : (world >= 9 || boss ? 1200 : (world >= 3 ? 2200 : 0)),
+        hidden: world >= 2,
+        exposedCount: world === 2 ? 2 : 0,
+        penaltyMs: world >= 3 ? (world >= 9 ? 5000 : 3000) : 0,
+        combo: world >= 4,
+        lockedCount: world >= 5 ? 2 : 0,
+        shuffleOnMismatch: world >= 6,
+        matchRule: world >= 7 ? 'sum10' : 'equal',
+        noColor: world >= 8,
+        targetMs: Math.max(30000, 95000 - world * 5000 - (level % 10) * 1500),
+    };
 }
 
 // genera coppie di numeri uguali (es. num=20 -> 10 coppie, 20 bottoni)
 // se ci sono abbastanza coppie, due di esse diventano i bonus speciali del gioco originale:
 // 'point' (Atom the Point: punti extra) e 'bomb' (Atom the Bomb: distrugge un'altra coppia a caso)
-function generatePuzzle(numButtons) {
+function generatePuzzle(numButtons, matchRule = 'equal') {
     const pairs = Math.max(2, Math.floor((numButtons || 20) / 2));
     const values = [];
     for (let v = 1; v <= pairs; v++) {
-        values.push(v, v);
+        if (matchRule === 'sum10') {
+            const first = ((v - 1) % 9) + 1;
+            values.push(first, 10 - first);
+        } else {
+            values.push(v, v);
+        }
     }
     if (pairs >= 4) {
         values[0] = 'point'; values[1] = 'point';
@@ -35,19 +65,148 @@ function generatePuzzle(numButtons) {
     return shuffle(values);
 }
 
+function valuesMatch(first, second, rule) {
+    if (first === 'point' || first === 'bomb') return first === second;
+    return rule === 'sum10' ? Number(first) + Number(second) === 10 : first === second;
+}
+
+function lockedIndicesForPuzzle(puzzle, count) {
+    return puzzle
+        .map((value, index) => ({ value, index }))
+        .filter(({ value }) => value !== 'point' && value !== 'bomb')
+        .slice(0, count)
+        .map(({ index }) => index);
+}
+
+function normalizeNickname(value) {
+    const nickname = String(value || '').trim().replace(/\s+/g, ' ');
+    return /^[\p{L}\p{N}_ -]{2,24}$/u.test(nickname) ? nickname : null;
+}
+
 module.exports = (io, main) => {
+
+    const clearCampaignDeadline = function (game) {
+        if (game && game.deadlineTimer) {
+            clearTimeout(game.deadlineTimer);
+            game.deadlineTimer = null;
+        }
+    };
+
+    const finishCampaignLoss = async function (socket, game) {
+        if (!game || game.finishing || socket.data.game !== game) return;
+        game.finishing = true;
+        clearCampaignDeadline(game);
+
+        const score = (game.totalScore || 0) + (game.levelScore || 0);
+        const elapsedMs = Date.now() - game.campaignStartTime + game.totalPenaltyMs;
+        let scoreId = null;
+        try {
+            scoreId = await saveScore({
+                nickname: socket.data.username,
+                mode: 'campaign-total',
+                score,
+                elapsedMs,
+                level: game.liv || 1,
+            });
+        } catch (e) {
+            console.error('Errore salvataggio sconfitta:', e.message);
+        }
+
+        if (scoreId) {
+            if (!socket.data.renameableScoreIds) socket.data.renameableScoreIds = new Set();
+            socket.data.renameableScoreIds.add(scoreId);
+        }
+        socket.data.game = null;
+        socket.emit('campaignLost', { score, elapsedMs, liv: game.liv || 1 });
+    };
+
+    const setCampaignDeadline = function (socket, game) {
+        clearCampaignDeadline(game);
+        const elapsedLevelMs = Date.now() - game.startTime + game.levelPenaltyMs;
+        const remainingMs = Math.max(0, game.config.targetMs - elapsedLevelMs);
+        game.deadlineTimer = setTimeout(() => void finishCampaignLoss(socket, game), remainingMs);
+        if (typeof game.deadlineTimer.unref === 'function') game.deadlineTimer.unref();
+    };
 
     const gameStart = function (liv) {
         const socket = this;
+        clearCampaignDeadline(socket.data.game);
         removeFromWaitingQueue(socket);
-        const requestedLevel = Number(liv);
-        const startLiv = Number.isInteger(requestedLevel) && requestedLevel === 1 ? requestedLevel : 1;
-        const puzzle = generatePuzzle(numButtonsForLevel(startLiv));
+        const definition = levelDefinition(1);
+        const now = Date.now();
         socket.data.game = {
-            mode: 'campain', puzzle, liv: startLiv, totalScore: 0, levelScore: 0,
-            startTime: Date.now(), matched: new Set(), pending: null, finishing: false,
+            mode: 'match3', liv: 1, board: createBoard(definition.size), definition,
+            score: 0, totalScore: 0, movesLeft: definition.moves,
+            campaignStartTime: now, finishing: false,
         };
-        io.to(socket.id).emit('gameSet', { mode: 'campain', puzzle, liv: startLiv });
+        io.to(socket.id).emit('gameSet', match3Payload(socket.data.game));
+    };
+
+    function match3Payload(game, extra = {}) {
+        return {
+            mode: 'match3', board: game.board, liv: game.liv, score: game.score,
+            totalScore: game.totalScore, movesLeft: game.movesLeft,
+            definition: game.definition,
+            elapsedMs: Date.now() - game.campaignStartTime,
+            ...extra,
+        };
+    }
+
+    const finishMatch3Loss = async function (socket, game) {
+        if (game.finishing || socket.data.game !== game) return;
+        game.finishing = true;
+        const finalScore = game.totalScore + game.score;
+        const elapsedMs = Date.now() - game.campaignStartTime;
+        try {
+            const scoreId = await saveScore({
+                nickname: socket.data.username, mode: 'campaign-total', score: finalScore,
+                elapsedMs, level: game.liv,
+            });
+            if (!socket.data.renameableScoreIds) socket.data.renameableScoreIds = new Set();
+            socket.data.renameableScoreIds.add(scoreId);
+        } catch (e) {
+            console.error('Errore salvataggio match-3:', e.message);
+        }
+        socket.data.game = null;
+        socket.emit('campaignLost', { score: finalScore, elapsedMs, liv: game.liv, reason: 'moves' });
+    };
+
+    const match3Move = function (payload) {
+        const socket = this;
+        const game = socket.data.game;
+        if (!game || game.mode !== 'match3' || game.finishing || game.movesLeft <= 0) return;
+        const result = makeMove(game.board, payload && payload.from, payload && payload.to);
+        if (!result.valid) {
+            socket.emit('match3Invalid');
+            return;
+        }
+        game.board = result.board;
+        game.score += result.score;
+        game.movesLeft -= 1;
+
+        if (game.score >= game.definition.targetScore) {
+            const completedScore = game.score;
+            const nextLevel = game.liv + 1;
+            game.totalScore += completedScore;
+            if (nextLevel > 10) {
+                const elapsedMs = Date.now() - game.campaignStartTime;
+                socket.emit('gameOverAck', { score: game.totalScore, elapsedMs, topScores: [], liv: 10 });
+                socket.data.game = null;
+                return;
+            }
+            game.liv = nextLevel;
+            game.definition = levelDefinition(nextLevel);
+            game.board = createBoard(game.definition.size);
+            game.score = 0;
+            game.movesLeft = game.definition.moves;
+            socket.emit('gameSet', match3Payload(game, {
+                levelComplete: { previousLiv: nextLevel - 1, score: completedScore, totalScore: game.totalScore },
+            }));
+            return;
+        }
+
+        socket.emit('match3State', match3Payload(game, { steps: result.steps, gained: result.score }));
+        if (game.movesLeft <= 0) void finishMatch3Loss(socket, game);
     };
 
     const gameOnline1vs1 = function (action) {
@@ -91,7 +250,7 @@ module.exports = (io, main) => {
         socket.data.game = gameState;
         opponent.data.game = gameState;
 
-        io.to(roomId).emit('gameSet', { mode: '1vs1', puzzle, roomId });
+        io.to(roomId).emit('gameSet', { mode: '1vs1', puzzle, roomId, elapsedMs: 0 });
     };
 
     // risolve la fine di una partita 1vs1: salva i punteggi e dichiara vincitore/pareggio
@@ -101,11 +260,13 @@ module.exports = (io, main) => {
 
         const elapsedMs = Date.now() - game.startTime;
         const entries = Array.from(game.scores.entries());
+        const savedScoreIds = new Map();
 
         for (const [id, score] of entries) {
             const s = io.sockets.sockets.get(id);
             try {
-                await saveScore({ nickname: s ? s.data.username : 'anonimo', mode: '1vs1', score, elapsedMs, level: 1 });
+                const scoreId = await saveScore({ nickname: s ? s.data.username : 'anonimo', mode: '1vs1', score, elapsedMs, level: 1 });
+                savedScoreIds.set(id, scoreId);
             } catch (e) {
                 console.error('Errore salvataggio punteggio 1vs1:', e.message);
             }
@@ -121,7 +282,11 @@ module.exports = (io, main) => {
             if (!s) return;
             const opponentScore = entries.find(([oid]) => oid !== id)[1];
             const result = winnerId === null ? 'draw' : (id === winnerId ? 'win' : 'lose');
-            s.emit('gameResult', { result, score, opponentScore });
+            if (result === 'lose' && savedScoreIds.has(id)) {
+                if (!s.data.renameableScoreIds) s.data.renameableScoreIds = new Set();
+                s.data.renameableScoreIds.add(savedScoreIds.get(id));
+            }
+            s.emit('gameResult', { result, score, opponentScore, elapsedMs });
             s.data.game = null;
             s.leave(game.roomId);
         });
@@ -208,12 +373,14 @@ module.exports = (io, main) => {
     const finishCampaignLevel = async function (socket, game) {
         if (game.finishing || socket.data.game !== game) return;
         game.finishing = true;
+        clearCampaignDeadline(game);
 
-        const elapsedMs = Date.now() - game.startTime;
+        const levelElapsedMs = Date.now() - game.startTime + game.levelPenaltyMs;
+        const elapsedMs = Date.now() - game.campaignStartTime + game.totalPenaltyMs;
         const score = game.levelScore;
 
         try {
-            await saveScore({ nickname: socket.data.username, mode: game.mode, score, elapsedMs, level: game.liv || 1 });
+            await saveScore({ nickname: socket.data.username, mode: game.mode, score, elapsedMs: levelElapsedMs, level: game.liv || 1 });
         } catch (e) {
             console.error('Errore salvataggio punteggio:', e.message);
         }
@@ -231,21 +398,30 @@ module.exports = (io, main) => {
             return;
         }
 
-        const nextPuzzle = generatePuzzle(numButtonsForLevel(nextLiv));
+        const config = levelConfig(nextLiv);
+        const nextPuzzle = generatePuzzle(config.numButtons, config.matchRule);
+        const lockedIndices = lockedIndicesForPuzzle(nextPuzzle, config.lockedCount);
         socket.data.game = {
             mode: 'campain', puzzle: nextPuzzle, liv: nextLiv, totalScore, levelScore: 0,
-            startTime: Date.now(), matched: new Set(), pending: null, finishing: false,
+            startTime: Date.now(), campaignStartTime: game.campaignStartTime,
+            matched: new Set(), pending: null, finishing: false,
+            levelPenaltyMs: 0, totalPenaltyMs: game.totalPenaltyMs, errors: 0, combo: 0, config,
+            locked: new Set(lockedIndices),
         };
         io.to(socket.id).emit('gameSet', {
             mode: 'campain',
             puzzle: nextPuzzle,
             liv: nextLiv,
+            elapsedMs,
+            config,
+            lockedIndices,
             levelComplete: { previousLiv: game.liv || 1, score, totalScore },
         });
+        setCampaignDeadline(socket, socket.data.game);
     };
 
     const handleCampaignClick = function (socket, game, index) {
-        if (game.matched.has(index) || game.pending === index) return;
+        if (game.matched.has(index) || game.pending === index || game.locked.has(index)) return;
         if (game.pending === null) {
             game.pending = index;
             socket.emit('buttonSelected', { index, by: socket.id });
@@ -255,14 +431,24 @@ module.exports = (io, main) => {
         const pending = game.pending;
         game.pending = null;
         const value = game.puzzle[pending];
-        if (value !== game.puzzle[index]) {
-            socket.emit('pairMismatch', { indices: [pending, index] });
+        if (!valuesMatch(value, game.puzzle[index], game.config.matchRule)) {
+            game.errors += 1;
+            game.combo = 0;
+            game.levelPenaltyMs += game.config.penaltyMs;
+            game.totalPenaltyMs += game.config.penaltyMs;
+            socket.emit('pairMismatch', {
+                indices: [pending, index], penaltyMs: game.config.penaltyMs,
+                errors: game.errors, shuffle: game.config.shuffleOnMismatch,
+            });
+            setCampaignDeadline(socket, game);
             return;
         }
 
         game.matched.add(pending);
         game.matched.add(index);
-        let points = value === 'point' ? 60 : 10;
+        game.combo += 1;
+        const multiplier = game.config.combo ? Math.min(game.combo, 5) : 1;
+        let points = (value === 'point' ? 60 : 10) * multiplier;
         const bonus = value === 'point' || value === 'bomb' ? value : null;
         const extraIndices = [];
 
@@ -278,12 +464,20 @@ module.exports = (io, main) => {
                 const chosen = candidates[Math.floor(Math.random() * candidates.length)].slice(0, 2);
                 chosen.forEach(i => game.matched.add(i));
                 extraIndices.push(...chosen);
-                points += 10;
+                points += 10 * multiplier;
             }
         }
 
         game.levelScore += points;
-        socket.emit('pairMatched', { indices: [pending, index], extraIndices, by: socket.id, bonus, points });
+        socket.emit('pairMatched', {
+            indices: [pending, index], extraIndices, by: socket.id, bonus, points,
+            combo: game.combo, multiplier,
+        });
+        if (game.locked.size && game.matched.size >= 4) {
+            const unlockedIndices = Array.from(game.locked);
+            game.locked.clear();
+            socket.emit('unlockButtons', { indices: unlockedIndices });
+        }
         if (game.matched.size >= game.puzzle.length) void finishCampaignLevel(socket, game);
     };
 
@@ -293,11 +487,14 @@ module.exports = (io, main) => {
     const gameDisconnectCleanup = function () {
         const socket = this;
         removeFromWaitingQueue(socket);
+        clearCampaignDeadline(socket.data.game);
 
         const game = socket.data.game;
         if (game && game.mode === '1vs1' && game.roomId && !game.decided) {
             game.decided = true;
-            socket.to(game.roomId).emit('gameResult', { result: 'win', reason: 'opponent-disconnected' });
+            socket.to(game.roomId).emit('gameResult', {
+                result: 'win', reason: 'opponent-disconnected', elapsedMs: Date.now() - game.startTime,
+            });
 
             const opponentId = Array.from(game.scores.keys()).find((id) => id !== socket.id);
             const opponentSocket = opponentId && io.sockets.sockets.get(opponentId);
@@ -320,5 +517,32 @@ module.exports = (io, main) => {
         }
     };
 
-    return { gameStart, gameOnline1vs1, gameClick, gameOver, gameDisconnectCleanup, statsRequest };
+    const setScoreNickname = async function (value) {
+        const socket = this;
+        const nickname = normalizeNickname(value);
+        if (!nickname) {
+            socket.emit('nicknameResult', { ok: false, error: 'Usa da 2 a 24 lettere, numeri, spazi, _ o -.' });
+            return;
+        }
+        const ids = socket.data.renameableScoreIds;
+        if (!ids || ids.size === 0) return;
+        try {
+            await Promise.all(Array.from(ids).map(id => updateScoreNickname(id, nickname)));
+            ids.clear();
+            socket.data.username = nickname;
+            socket.emit('nicknameResult', { ok: true, nickname });
+        } catch (e) {
+            console.error('Errore aggiornamento nickname:', e.message);
+            socket.emit('nicknameResult', { ok: false, error: 'Nome non salvato. Riprova.' });
+        }
+    };
+
+    return {
+        gameStart, gameOnline1vs1, gameClick, gameOver, gameDisconnectCleanup,
+        statsRequest, setScoreNickname, match3Move,
+    };
+};
+
+module.exports._test = {
+    levelConfig, generatePuzzle, valuesMatch, lockedIndicesForPuzzle, normalizeNickname, MAX_LEVEL,
 };

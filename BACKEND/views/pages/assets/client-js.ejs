@@ -144,9 +144,14 @@ modalContent = this.getEl("modal-document");
 // AREA E CONTATORI DEL GIOCO
 buttonArea = this.getEl('buttonAreaH');
 gameLevelEl = this.getEl('gameLevel');
+gameMissionEl = this.getEl('gameMission');
 gameScoreEl = this.getEl('gameScore');
 gameTotalScoreEl = this.getEl('gameTotalScore');
 gameRemainingEl = this.getEl('gameRemaining');
+gameTimerEl = this.getEl('gameTimer');
+gameDeadlineEl = this.getEl('gameDeadline');
+gameComboEl = this.getEl('gameCombo');
+gameErrorsEl = this.getEl('gameErrors');
 gameBonusMsgEl = this.getEl('gameBonusMsg');
 waitingPlayer = this.getEl('waitingplayer');
 waitingPlayerText = this.getEl('waitingplayerText');
@@ -160,7 +165,18 @@ totalScore = 0;
 my1v1Score = 0;
 opp1v1Score = 0;
 startTime = 0;
+levelStartTime = 0;
+timerInterval = null;
 currentMode = null;
+currentConfig = null;
+match3Selected = null;
+match3Busy = false;
+match3SwapAnimations = [];
+match3SwapPromise = Promise.resolve();
+match3PendingMove = null;
+errors = 0;
+combo = 0;
+concealTimeout = null;
 
 constructor(){
     super();
@@ -239,15 +255,25 @@ closeModal(){
 bindGameEvents(){
     this.socket.on('gameSet', (payload) => this.onGameSet(payload));
     this.socket.on('gameOverAck', (payload) => this.onGameOverAck(payload));
+    this.socket.on('campaignLost', (payload) => this.onCampaignLost(payload));
     this.socket.on('gameResult', (payload) => this.onGameResult(payload));
     this.socket.on('buttonSelected', (payload) => this.onButtonSelected(payload));
     this.socket.on('pairMatched', (payload) => this.onPairMatched(payload));
     this.socket.on('pairMismatch', (payload) => this.onPairMismatch(payload));
+    this.socket.on('unlockButtons', (payload) => this.onUnlockButtons(payload));
+    this.socket.on('nicknameResult', (payload) => this.onNicknameResult(payload));
+    this.socket.on('match3State', (payload) => this.onMatch3State(payload));
+    this.socket.on('match3Invalid', () => this.onMatch3Invalid());
     this.socket.on('statsData', (rows) => this.renderStats(rows));
 }
 
 onGameSet(payload){
-    const { mode, puzzle, data, liv, levelComplete } = payload;
+    const { mode, puzzle, data, liv, levelComplete, elapsedMs = 0, config = null, lockedIndices = [] } = payload;
+
+    if(mode === 'match3'){
+        this.setupMatch3(payload);
+        return;
+    }
 
     if(mode === '1vs1-wait'){
         if(this.waitingPlayer.classList.contains('hide')){
@@ -270,7 +296,7 @@ onGameSet(payload){
         this.totalScore = 0;
     }
 
-    this.startGame(mode, puzzle, liv);
+    this.startGame(mode, puzzle, liv, elapsedMs, config, lockedIndices);
 }
 
 // icone dei bonus originali del gioco: Atom the Point (punti extra) e Atom the Bomb (distrugge un'altra coppia)
@@ -279,16 +305,223 @@ BONUS_ICON = {
     bomb: 'https://latitanti.altervista.org/BG/img/atom-the-bomb.png',
 };
 
-startGame(mode, puzzle, liv){
+setupMatch3(payload){
+    const { board, liv, score, totalScore, movesLeft, definition, elapsedMs = 0, levelComplete } = payload;
+    this.currentMode = 'match3';
+    this.currentConfig = null;
+    this.score = score;
+    this.totalScore = totalScore;
+    this.match3Selected = null;
+    this.match3Busy = false;
+    this.startTimer(elapsedMs);
+    this.gameLevelEl.textContent = `NUMBER BLAST · LIVELLO ${liv}/10`;
+    this.gameMissionEl.textContent = `Raggiungi ${definition.targetScore} punti in ${definition.moves} mosse`;
+    this.gameScoreEl.textContent = `PUNTEGGIO: ${score}/${definition.targetScore}`;
+    this.gameTotalScoreEl.textContent = `TOTALE: ${totalScore + score}`;
+    this.gameRemainingEl.textContent = `MOSSE: ${movesLeft}`;
+    this.gameComboEl.textContent = 'MATCH: 3+';
+    this.gameErrorsEl.textContent = 'SPECIALI: 4/5';
+    if(levelComplete){
+        sfx.levelUp();
+        this.showBonusMessage(`Livello ${levelComplete.previousLiv} completato! +${levelComplete.score}`);
+    }
+    this.renderMatch3Board(board);
+    this.openPag('gameArea');
+}
+
+renderMatch3Board(board){
+    this.buttonArea.className = 'match3-board';
+    this.buttonArea.style.setProperty('--board-size', board.length);
+    this.buttonArea.replaceChildren();
+    board.forEach((line, row) => line.forEach((cell, col) => {
+        const tile = document.createElement('button');
+        tile.className = `match3-tile tile-${cell.value}${cell.special ? ` special-${cell.special}` : ''}`;
+        tile.dataset.row = row;
+        tile.dataset.col = col;
+        tile.setAttribute('aria-label', `Numero ${cell.value}${cell.special ? ` speciale ${cell.special}` : ''}`);
+        const number = document.createElement('span');
+        number.textContent = cell.value;
+        tile.appendChild(number);
+        if(cell.special){
+            const badge = document.createElement('b');
+            badge.textContent = cell.special === 'row' ? '↔' : (cell.special === 'col' ? '↕' : '✦');
+            tile.appendChild(badge);
+        }
+        tile.onclick = () => this.selectMatch3Tile(tile);
+        this.buttonArea.appendChild(tile);
+    }));
+}
+
+selectMatch3Tile(tile){
+    if(this.match3Busy) return;
+    const position = { row: Number(tile.dataset.row), col: Number(tile.dataset.col) };
+    if(!this.match3Selected){
+        this.match3Selected = position;
+        tile.classList.add('selected');
+        tile.animate([
+            { transform: 'scale(1)', offset: 0 },
+            { transform: 'scale(.9)', offset: .25 },
+            { transform: 'scale(1.16)', offset: .7 },
+            { transform: 'scale(1.14)', offset: 1 },
+        ], { duration: 260, easing: 'cubic-bezier(.2,.9,.25,1)' });
+        return;
+    }
+    const previous = this.match3Selected;
+    const distance = Math.abs(previous.row - position.row) + Math.abs(previous.col - position.col);
+    this.buttonArea.querySelector('.match3-tile.selected')?.classList.remove('selected');
+    if(distance !== 1){
+        this.match3Selected = position;
+        tile.classList.add('selected');
+        tile.animate([{ transform: 'scale(.9)' }, { transform: 'scale(1.14)' }], {
+            duration: 180, easing: 'cubic-bezier(.2,.9,.25,1)'
+        });
+        return;
+    }
+    const previousTile = this.buttonArea.querySelector(
+        `.match3-tile[data-row="${previous.row}"][data-col="${previous.col}"]`
+    );
+    const firstRect = previousTile.getBoundingClientRect();
+    const secondRect = tile.getBoundingClientRect();
+    const dx = secondRect.left - firstRect.left;
+    const dy = secondRect.top - firstRect.top;
+    this.match3SwapAnimations = [
+        previousTile.animate([
+            { transform: 'translate(0,0) scale(1.14)', zIndex: 4 },
+            { transform: `translate(${dx * .5}px, ${dy * .5 - 8}px) scale(1.08)`, zIndex: 4, offset: .5 },
+            { transform: `translate(${dx}px, ${dy}px) scale(1)`, zIndex: 4 },
+        ], { duration: 240, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' }),
+        tile.animate([
+            { transform: 'translate(0,0)', zIndex: 3 },
+            { transform: `translate(${-dx * .5}px, ${-dy * .5 + 8}px) scale(.96)`, zIndex: 3, offset: .5 },
+            { transform: `translate(${-dx}px, ${-dy}px)`, zIndex: 3 },
+        ], { duration: 240, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' }),
+    ];
+    this.match3SwapPromise = Promise.all(this.match3SwapAnimations.map(animation => animation.finished.catch(() => {})));
+    this.match3PendingMove = { previous, position };
+    this.match3Selected = null;
+    this.match3Busy = true;
+    this.buttonArea.classList.add('resolving');
+    this.socket.emit('match3 move', { from: previous, to: position });
+}
+
+async onMatch3State(payload){
+    this.score = payload.score;
+    this.totalScore = payload.totalScore;
+    this.gameScoreEl.textContent = `PUNTEGGIO: ${payload.score}/${payload.definition.targetScore}`;
+    this.gameTotalScoreEl.textContent = `TOTALE: ${payload.totalScore + payload.score}`;
+    this.gameRemainingEl.textContent = `MOSSE: ${payload.movesLeft}`;
+    if(payload.steps && payload.steps.length > 1) this.showBonusMessage(`CASCATA ×${payload.steps.length}! +${payload.gained}`);
+    else this.showBonusMessage(`+${payload.gained} punti`);
+    await this.match3SwapPromise;
+    this.match3SwapAnimations.forEach(animation => animation.cancel());
+    for(const step of (payload.steps || [])){
+        this.renderMatch3Board(step.before);
+        await this.animateMatch3Clear(step);
+        this.renderMatch3Board(step.after);
+        await this.animateMatch3Fall(step.cascade);
+        if(step.cascade > 1) sfx.levelUp(); else sfx.match();
+    }
+    this.renderMatch3Board(payload.board);
+    this.match3Busy = false;
+    this.match3PendingMove = null;
+}
+
+async onMatch3Invalid(){
+    await this.match3SwapPromise;
+    this.match3SwapAnimations.forEach(animation => animation.cancel());
+    this.buttonArea.classList.add('invalid-move');
+    const move = this.match3PendingMove;
+    if(move){
+        [move.previous, move.position].forEach(position => {
+            const target = this.buttonArea.querySelector(`.match3-tile[data-row="${position.row}"][data-col="${position.col}"]`);
+            target?.animate([
+                { transform: 'translateX(0)', filter: 'brightness(1)' },
+                { transform: 'translateX(-7px)', filter: 'brightness(1.6)' },
+                { transform: 'translateX(7px)' },
+                { transform: 'translateX(0)', filter: 'brightness(1)' },
+            ], { duration: 280, easing: 'ease-out' });
+        });
+    }
+    sfx.wrong();
+    setTimeout(() => {
+        this.buttonArea.classList.remove('invalid-move', 'resolving');
+        this.match3Busy = false;
+        this.match3PendingMove = null;
+    }, 280);
+}
+
+async animateMatch3Clear(step){
+    const animations = [];
+    step.cleared.forEach(item => {
+        const [row, col] = item.split(':').map(Number);
+        const tile = this.buttonArea.querySelector(`.match3-tile[data-row="${row}"][data-col="${col}"]`);
+        if(!tile) return;
+        this.spawnMatch3Particles(tile, step.cascade);
+        animations.push(tile.animate([
+            { transform: 'scale(1) rotate(0)', opacity: 1, filter: 'brightness(1)' },
+            { transform: 'scale(1.32) rotate(-5deg)', opacity: 1, filter: 'brightness(2.3)', offset: .45 },
+            { transform: 'scale(0) rotate(18deg)', opacity: 0, filter: 'brightness(2.8)' },
+        ], { duration: 300, easing: 'cubic-bezier(.3,.8,.3,1)', fill: 'forwards' }));
+    });
+    await Promise.all(animations.map(animation => animation.finished.catch(() => {})));
+}
+
+async animateMatch3Fall(cascade){
+    const animations = Array.from(this.buttonArea.querySelectorAll('.match3-tile')).map(tile => {
+        const row = Number(tile.dataset.row);
+        return tile.animate([
+            { transform: `translateY(${-35 - row * 3}px) scale(.92)`, opacity: .35 },
+            { transform: 'translateY(5px) scale(1.03)', opacity: 1, offset: .78 },
+            { transform: 'translateY(0) scale(1)', opacity: 1 },
+        ], {
+            duration: 260 + Math.min(cascade, 4) * 35,
+            delay: row * 13,
+            easing: 'cubic-bezier(.2,.75,.25,1)',
+        });
+    });
+    await Promise.all(animations.map(animation => animation.finished.catch(() => {})));
+}
+
+spawnMatch3Particles(tile, cascade){
+    const boardRect = this.buttonArea.getBoundingClientRect();
+    const rect = tile.getBoundingClientRect();
+    for(let i = 0; i < 7; i++){
+        const particle = document.createElement('i');
+        particle.className = 'match3-particle';
+        particle.style.left = `${rect.left - boardRect.left + rect.width / 2}px`;
+        particle.style.top = `${rect.top - boardRect.top + rect.height / 2}px`;
+        particle.style.background = getComputedStyle(tile).backgroundColor;
+        this.buttonArea.appendChild(particle);
+        const angle = (Math.PI * 2 * i / 7) + Math.random() * .35;
+        const distance = 24 + Math.random() * 25 + cascade * 3;
+        const animation = particle.animate([
+            { transform: 'translate(-50%,-50%) scale(1)', opacity: 1 },
+            { transform: `translate(calc(-50% + ${Math.cos(angle) * distance}px), calc(-50% + ${Math.sin(angle) * distance}px)) scale(0)`, opacity: 0 },
+        ], { duration: 380 + Math.random() * 180, easing: 'cubic-bezier(.15,.7,.3,1)' });
+        animation.finished.finally(() => particle.remove());
+    }
+}
+
+startGame(mode, puzzle, liv, elapsedMs = 0, config = null, lockedIndices = []){
     this.currentMode = mode;
+    this.currentConfig = config;
     this.score = 0;
     this.selectedButton = null;
     this.remainingPairs = puzzle.length / 2;
     this.my1v1Score = 0;
     this.opp1v1Score = 0;
-    this.startTime = Date.now();
+    this.errors = 0;
+    this.combo = 0;
+    clearTimeout(this.concealTimeout);
+    this.levelStartTime = Date.now();
+    this.startTimer(elapsedMs);
+    this.buttonArea.className = '';
+    this.buttonArea.style.removeProperty('--board-size');
     this.buttonArea.innerHTML = '';
-    this.gameLevelEl.innerText = mode === '1vs1' ? '1 VS 1' : `LIVELLO ${liv || 1}`;
+    this.gameLevelEl.innerText = mode === '1vs1'
+        ? '1 VS 1'
+        : `MONDO ${config ? config.world : 1} · LIVELLO ${liv || 1}${config && config.boss ? ' · BOSS' : ''}`;
+    this.renderMission();
     this.updateScoreboard();
 
     puzzle.forEach((value, index) => {
@@ -305,7 +538,9 @@ startGame(mode, puzzle, liv){
             btn.appendChild(img);
         } else {
             // bottoni con lo stesso numero hanno lo stesso colore
-            btn.style.backgroundColor = `hsl(${(value * 47) % 360}, 65%, 45%)`;
+            btn.style.backgroundColor = config && config.noColor
+                ? '#45515c'
+                : `hsl(${(value * 47) % 360}, 65%, 45%)`;
             const numero = document.createElement('span');
             numero.className = 'numero';
             numero.innerText = value;
@@ -313,10 +548,54 @@ startGame(mode, puzzle, liv){
         }
 
         btn.onclick = () => this.onButtonClick(btn);
+        if(config && index < config.exposedCount) btn.classList.add('always-visible');
+        if(lockedIndices.includes(index)){
+            btn.disabled = true;
+            btn.classList.add('level-locked');
+        }
         this.buttonArea.appendChild(btn);
     });
 
     this.openPag('gameArea');
+
+    if(config && config.hidden){
+        this.buttonArea.classList.add('previewing');
+        this.concealTimeout = setTimeout(() => {
+            this.buttonArea.classList.remove('previewing');
+            this.buttonArea.querySelectorAll('.buttonGame:not(.always-visible)').forEach(button => button.classList.add('concealed'));
+        }, config.previewMs);
+    } else {
+        this.buttonArea.classList.remove('previewing');
+    }
+}
+
+renderMission(){
+    if(!this.gameMissionEl) return;
+    if(this.currentMode === '1vs1'){
+        this.gameMissionEl.textContent = 'Trova più coppie del tuo avversario';
+        return;
+    }
+    const config = this.currentConfig || {};
+    const rules = [config.matchRule === 'sum10' ? 'Abbina numeri con somma 10' : 'Abbina numeri uguali'];
+    if(config.hidden) rules.push(`memorizza in ${(config.previewMs / 1000).toFixed(1)}s`);
+    if(config.exposedCount) rules.push(`${config.exposedCount} tessere restano scoperte`);
+    if(config.targetMs) rules.push(`tempo massimo ${Math.round(config.targetMs / 1000)}s`);
+    if(config.penaltyMs) rules.push(`errore +${config.penaltyMs / 1000}s`);
+    if(config.combo) rules.push('combo attiva');
+    if(config.lockedCount) rules.push('2 caselle si aprono dopo 2 coppie');
+    if(config.shuffleOnMismatch) rules.push('errore mescola la griglia');
+    this.gameMissionEl.textContent = rules.join(' · ');
+}
+
+onUnlockButtons({ indices }){
+    indices.forEach(index => {
+        const button = this.getGameButton(index);
+        if(!button) return;
+        button.disabled = false;
+        button.classList.remove('level-locked');
+        if(this.currentConfig && this.currentConfig.hidden) button.classList.add('concealed');
+    });
+    this.showBonusMessage('Caselle sbloccate!');
 }
 
 getGameButton(index){
@@ -339,10 +618,11 @@ onButtonSelected({ index, by }){
     const btn = this.getGameButton(index);
     if(!btn) return;
     btn.disabled = true;
+    btn.classList.remove('concealed');
     btn.classList.add(by === this.socket.id ? 'selected' : 'locked');
 }
 
-onPairMatched({ indices, extraIndices, by, bonus, points }){
+onPairMatched({ indices, extraIndices, by, bonus, points, combo = 0, multiplier = 1 }){
     sfx.match();
     if(bonus === 'point') sfx.point();
     if(bonus === 'bomb') sfx.bomb();
@@ -350,7 +630,7 @@ onPairMatched({ indices, extraIndices, by, bonus, points }){
     const buttons = [...indices, ...(extraIndices || [])]
         .map(i => this.getGameButton(i))
         .filter(Boolean);
-    buttons.forEach(b => { b.disabled = true; b.classList.remove('selected', 'locked'); });
+    buttons.forEach(b => { b.disabled = true; b.classList.remove('selected', 'locked', 'concealed'); });
     this.popButtons(...buttons);
 
     if(bonus === 'point') this.showBonusMessage('Atom the Point: +50 punti extra!');
@@ -361,21 +641,45 @@ onPairMatched({ indices, extraIndices, by, bonus, points }){
     } else {
         this.score += points;
         this.remainingPairs -= (indices.length + (extraIndices || []).length) / 2;
+        this.combo = combo;
+        if(multiplier > 1) this.showBonusMessage(`COMBO ×${multiplier}: +${points} punti!`);
     }
     this.updateScoreboard();
 }
 
-onPairMismatch({ indices }){
+onPairMismatch({ indices, penaltyMs = 0, errors, shuffle = false }){
     sfx.wrong();
+    if(this.currentMode !== '1vs1'){
+        this.combo = 0;
+        this.errors = errors || this.errors + 1;
+        if(penaltyMs){
+            this.startTime -= penaltyMs;
+            this.levelStartTime -= penaltyMs;
+            this.showBonusMessage(`Errore: +${penaltyMs / 1000} secondi`);
+        }
+        this.updateScoreboard();
+    }
     indices.forEach(i => {
         const btn = this.getGameButton(i);
         if(!btn) return;
+        btn.classList.remove('concealed');
         btn.classList.add('wrong');
         setTimeout(() => {
             btn.classList.remove('wrong', 'selected', 'locked');
+            if(this.currentConfig && this.currentConfig.hidden) btn.classList.add('concealed');
             btn.disabled = false;
         }, 400);
     });
+    if(shuffle) setTimeout(() => this.shuffleVisibleButtons(), 450);
+}
+
+shuffleVisibleButtons(){
+    const buttons = Array.from(this.buttonArea.querySelectorAll('.buttonGame'));
+    for(let i = buttons.length - 1; i > 0; i--){
+        const j = Math.floor(Math.random() * (i + 1));
+        [buttons[i], buttons[j]] = [buttons[j], buttons[i]];
+    }
+    buttons.forEach(button => this.buttonArea.appendChild(button));
 }
 
 // effetto grafico di "esplosione" quando una coppia viene accoppiata: i bottoni si ingrandiscono,
@@ -424,15 +728,66 @@ updateScoreboard(){
         this.gameScoreEl.innerText = `Tu: ${this.my1v1Score}`;
         this.gameTotalScoreEl.innerText = `Avversario: ${this.opp1v1Score}`;
         this.gameRemainingEl.innerText = '';
+        this.gameComboEl.innerText = '';
+        this.gameErrorsEl.innerText = '';
         return;
     }
 
     this.gameScoreEl.innerText = `Punteggio livello: ${this.score}`;
     this.gameTotalScoreEl.innerText = `Totale: ${this.totalScore + this.score}`;
     this.gameRemainingEl.innerText = `NUMERI RIMASTI: ${this.remainingPairs}`;
+    this.gameComboEl.innerText = this.currentConfig && this.currentConfig.combo
+        ? `COMBO: ×${Math.max(1, Math.min(this.combo, 5))}`
+        : 'COMBO: —';
+    this.gameErrorsEl.innerText = `ERRORI: ${this.errors}`;
+}
+
+startTimer(elapsedMs = 0){
+    this.stopTimer();
+    this.startTime = Date.now() - Math.max(0, Number(elapsedMs) || 0);
+    this.renderTimer();
+    this.timerInterval = setInterval(() => this.renderTimer(), 100);
+}
+
+stopTimer(){
+    if(this.timerInterval){
+        clearInterval(this.timerInterval);
+        this.timerInterval = null;
+    }
+}
+
+renderTimer(){
+    if(!this.gameTimerEl) return;
+    const elapsedMs = Math.max(0, Date.now() - this.startTime);
+    const minutes = Math.floor(elapsedMs / 60000);
+    const seconds = Math.floor((elapsedMs % 60000) / 1000);
+    const tenths = Math.floor((elapsedMs % 1000) / 100);
+    this.gameTimerEl.textContent = `TEMPO: ${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${tenths}`;
+    this.gameTimerEl.classList.toggle('warning', elapsedMs >= 60000 && elapsedMs < 120000);
+    this.gameTimerEl.classList.toggle('danger', elapsedMs >= 120000);
+
+    if(this.gameDeadlineEl){
+        if(this.currentMode === 'campain' && this.currentConfig && this.currentConfig.targetMs){
+            const remainingMs = Math.max(0, this.currentConfig.targetMs - (Date.now() - this.levelStartTime));
+            const remainingMinutes = Math.floor(remainingMs / 60000);
+            const remainingSeconds = Math.floor((remainingMs % 60000) / 1000);
+            const remainingTenths = Math.floor((remainingMs % 1000) / 100);
+            this.gameDeadlineEl.textContent = `LIMITE: ${String(remainingMinutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}.${remainingTenths}`;
+            this.gameDeadlineEl.classList.toggle('danger', remainingMs <= 10000);
+        } else if(this.currentMode === 'match3') {
+            this.gameDeadlineEl.textContent = 'MODALITÀ: MOSSE';
+            this.gameDeadlineEl.classList.remove('danger');
+        } else {
+            this.gameDeadlineEl.textContent = '';
+            this.gameDeadlineEl.classList.remove('danger');
+        }
+    }
 }
 
 onGameOverAck({ score, elapsedMs, topScores, liv }){
+    this.stopTimer();
+    this.startTime = Date.now() - elapsedMs;
+    this.renderTimer();
     alert(`Hai completato tutti i livelli (fino al livello ${liv})! Punteggio totale: ${score} in ${(elapsedMs/1000).toFixed(1)}s`);
     this.totalScore = 0;
     this.renderStats(topScores);
@@ -440,7 +795,21 @@ onGameOverAck({ score, elapsedMs, topScores, liv }){
     this.openPag('game');
 }
 
-onGameResult({ result, reason, score, opponentScore }){
+onCampaignLost({ score, elapsedMs, liv, reason }){
+    this.stopTimer();
+    this.startTime = Date.now() - elapsedMs;
+    this.renderTimer();
+    alert(`${reason === 'moves' ? 'Mosse terminate' : 'Tempo scaduto'} al livello ${liv}. Punteggio totale: ${score}`);
+    this.openPag('game');
+    this.requestPlayerName();
+}
+
+onGameResult({ result, reason, score, opponentScore, elapsedMs }){
+    this.stopTimer();
+    if(elapsedMs !== undefined){
+        this.startTime = Date.now() - elapsedMs;
+        this.renderTimer();
+    }
     const punteggi = (score !== undefined && opponentScore !== undefined) ? ` (${score} vs ${opponentScore})` : '';
     if(result === 'win'){
         alert((reason === 'opponent-disconnected' ? 'Hai vinto! Il tuo avversario si è disconnesso.' : 'Hai vinto!') + punteggi);
@@ -448,8 +817,25 @@ onGameResult({ result, reason, score, opponentScore }){
         alert('Pareggio!' + punteggi);
     } else {
         alert('Hai perso, riprova!' + punteggi);
+        this.requestPlayerName();
     }
     this.openPag('game');
+}
+
+requestPlayerName(error = ''){
+    const message = `${error ? `${error}\n\n` : ''}Inserisci il tuo nome per la classifica (2–24 caratteri):`;
+    const nickname = window.prompt(message, localStorage.getItem('playerName') || '');
+    if(nickname === null) return;
+    this.socket.emit('set score nickname', nickname);
+}
+
+onNicknameResult({ ok, nickname, error }){
+    if(!ok){
+        this.requestPlayerName(error || 'Nome non valido.');
+        return;
+    }
+    localStorage.setItem('playerName', nickname);
+    this.showBonusMessage(`Punteggio salvato come ${nickname}`);
 }
 
 renderStats(rows){
