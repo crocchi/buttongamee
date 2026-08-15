@@ -174,6 +174,7 @@ match3Busy = false;
 match3SwapAnimations = [];
 match3SwapPromise = Promise.resolve();
 match3PendingMove = null;
+sudokuSelected = null;
 errors = 0;
 combo = 0;
 concealTimeout = null;
@@ -264,13 +265,16 @@ bindGameEvents(){
     this.socket.on('nicknameResult', (payload) => this.onNicknameResult(payload));
     this.socket.on('match3State', (payload) => this.onMatch3State(payload));
     this.socket.on('match3Invalid', () => this.onMatch3Invalid());
+    this.socket.on('sudokuSet', (payload) => this.setupSudoku(payload));
+    this.socket.on('sudokuCell', (payload) => this.onSudokuCell(payload));
+    this.socket.on('sudokuComplete', (payload) => this.onSudokuComplete(payload));
     this.socket.on('statsData', (rows) => this.renderStats(rows));
 }
 
 onGameSet(payload){
     const { mode, puzzle, data, liv, levelComplete, elapsedMs = 0, config = null, lockedIndices = [] } = payload;
 
-    if(mode === 'match3'){
+    if(mode === 'match3' || mode === 'match3-1vs1'){
         this.setupMatch3(payload);
         return;
     }
@@ -306,18 +310,23 @@ BONUS_ICON = {
 };
 
 setupMatch3(payload){
-    const { board, liv, score, totalScore, movesLeft, definition, elapsedMs = 0, levelComplete } = payload;
-    this.currentMode = 'match3';
+    const { board, liv, score = 0, totalScore = 0, movesLeft, definition, elapsedMs = 0, levelComplete, playerScores = {} } = payload;
+    const multiplayer = payload.mode === 'match3-1vs1';
+    this.currentMode = payload.mode;
     this.currentConfig = null;
     this.score = score;
     this.totalScore = totalScore;
     this.match3Selected = null;
     this.match3Busy = false;
     this.startTimer(elapsedMs);
-    this.gameLevelEl.textContent = `NUMBER BLAST · LIVELLO ${liv}/10`;
-    this.gameMissionEl.textContent = `Raggiungi ${definition.targetScore} punti in ${definition.moves} mosse`;
-    this.gameScoreEl.textContent = `PUNTEGGIO: ${score}/${definition.targetScore}`;
-    this.gameTotalScoreEl.textContent = `TOTALE: ${totalScore + score}`;
+    this.gameLevelEl.textContent = multiplayer ? 'NUMBER BLAST · 1 VS 1' : `NUMBER BLAST · LIVELLO ${liv}/10`;
+    this.gameMissionEl.textContent = multiplayer
+        ? 'Condividete la griglia: conquista più punti in 30 mosse'
+        : `Raggiungi ${definition.targetScore} punti in ${definition.moves} mosse`;
+    const myScore = playerScores[this.socket.id] || score;
+    const opponentScore = Object.entries(playerScores).find(([id]) => id !== this.socket.id)?.[1] || 0;
+    this.gameScoreEl.textContent = multiplayer ? `TU: ${myScore}` : `PUNTEGGIO: ${score}/${definition.targetScore}`;
+    this.gameTotalScoreEl.textContent = multiplayer ? `AVVERSARIO: ${opponentScore}` : `TOTALE: ${totalScore + score}`;
     this.gameRemainingEl.textContent = `MOSSE: ${movesLeft}`;
     this.gameComboEl.textContent = 'MATCH: 3+';
     this.gameErrorsEl.textContent = 'SPECIALI: 4/5';
@@ -405,13 +414,23 @@ selectMatch3Tile(tile){
 }
 
 async onMatch3State(payload){
-    this.score = payload.score;
-    this.totalScore = payload.totalScore;
-    this.gameScoreEl.textContent = `PUNTEGGIO: ${payload.score}/${payload.definition.targetScore}`;
-    this.gameTotalScoreEl.textContent = `TOTALE: ${payload.totalScore + payload.score}`;
+    if(payload.mode === 'match3-1vs1'){
+        const myScore = payload.playerScores[this.socket.id] || 0;
+        const opponentScore = Object.entries(payload.playerScores).find(([id]) => id !== this.socket.id)?.[1] || 0;
+        this.gameScoreEl.textContent = `TU: ${myScore}`;
+        this.gameTotalScoreEl.textContent = `AVVERSARIO: ${opponentScore}`;
+        this.showBonusMessage(payload.by === this.socket.id ? `+${payload.gained} punti` : `Avversario +${payload.gained}`);
+    } else {
+        this.score = payload.score;
+        this.totalScore = payload.totalScore;
+        this.gameScoreEl.textContent = `PUNTEGGIO: ${payload.score}/${payload.definition.targetScore}`;
+        this.gameTotalScoreEl.textContent = `TOTALE: ${payload.totalScore + payload.score}`;
+    }
     this.gameRemainingEl.textContent = `MOSSE: ${payload.movesLeft}`;
-    if(payload.steps && payload.steps.length > 1) this.showBonusMessage(`CASCATA ×${payload.steps.length}! +${payload.gained}`);
-    else this.showBonusMessage(`+${payload.gained} punti`);
+    if(payload.mode !== 'match3-1vs1'){
+        if(payload.steps && payload.steps.length > 1) this.showBonusMessage(`CASCATA ×${payload.steps.length}! +${payload.gained}`);
+        else this.showBonusMessage(`+${payload.gained} punti`);
+    }
     await this.match3SwapPromise;
     this.match3SwapAnimations.forEach(animation => animation.cancel());
     for(const step of (payload.steps || [])){
@@ -500,6 +519,89 @@ spawnMatch3Particles(tile, cascade){
         ], { duration: 380 + Math.random() * 180, easing: 'cubic-bezier(.15,.7,.3,1)' });
         animation.finished.finally(() => particle.remove());
     }
+}
+
+setupSudoku({ board, fixed, errors = 0, elapsedMs = 0 }){
+    this.currentMode = 'sudoku';
+    this.currentConfig = null;
+    this.errors = errors;
+    this.sudokuSelected = null;
+    this.startTimer(elapsedMs);
+    this.gameLevelEl.textContent = 'SUDOKU · CLASSICO';
+    this.gameMissionEl.textContent = 'Completa ogni riga, colonna e riquadro 3×3 con i numeri da 1 a 9';
+    this.gameScoreEl.textContent = 'DIFFICOLTÀ: MEDIA';
+    this.gameTotalScoreEl.textContent = '';
+    this.gameRemainingEl.textContent = `ERRORI: ${errors}`;
+    this.gameComboEl.textContent = '';
+    this.gameErrorsEl.textContent = '';
+    this.buttonArea.className = 'sudoku-wrapper';
+    this.buttonArea.replaceChildren();
+
+    const grid = document.createElement('div');
+    grid.className = 'sudoku-grid';
+    board.forEach((line, row) => line.forEach((value, col) => {
+        const cell = document.createElement('button');
+        cell.className = 'sudoku-cell' + (fixed[row][col] ? ' fixed' : ' empty');
+        cell.dataset.row = row;
+        cell.dataset.col = col;
+        cell.textContent = value || '';
+        cell.disabled = fixed[row][col];
+        cell.onclick = () => {
+            grid.querySelector('.selected')?.classList.remove('selected');
+            this.sudokuSelected = { row, col, cell };
+            cell.classList.add('selected');
+            cell.animate([{ transform: 'scale(.9)' }, { transform: 'scale(1.08)' }], { duration: 180 });
+        };
+        grid.appendChild(cell);
+    }));
+
+    const pad = document.createElement('div');
+    pad.className = 'sudoku-pad';
+    for(let value = 1; value <= 9; value++){
+        const button = document.createElement('button');
+        button.textContent = value;
+        button.onclick = () => {
+            if(!this.sudokuSelected) return;
+            const { row, col } = this.sudokuSelected;
+            this.socket.emit('sudoku input', { row, col, value });
+        };
+        pad.appendChild(button);
+    }
+    this.buttonArea.append(grid, pad);
+    this.openPag('gameArea');
+}
+
+onSudokuCell({ row, col, value, correct, errors }){
+    const cell = this.buttonArea.querySelector(`.sudoku-cell[data-row="${row}"][data-col="${col}"]`);
+    if(!cell) return;
+    if(correct){
+        cell.textContent = value;
+        cell.classList.remove('selected', 'empty', 'wrong');
+        cell.classList.add('solved');
+        cell.disabled = true;
+        this.sudokuSelected = null;
+        sfx.match();
+        cell.animate([{ transform: 'scale(1.2)', filter: 'brightness(1.8)' }, { transform: 'scale(1)', filter: 'brightness(1)' }], { duration: 260 });
+    } else {
+        this.errors = errors;
+        this.gameRemainingEl.textContent = `ERRORI: ${errors}`;
+        sfx.wrong();
+        cell.classList.add('wrong');
+        cell.animate([
+            { transform: 'translateX(0)' }, { transform: 'translateX(-7px)' },
+            { transform: 'translateX(7px)' }, { transform: 'translateX(0)' },
+        ], { duration: 280 });
+        setTimeout(() => cell.classList.remove('wrong'), 300);
+    }
+}
+
+onSudokuComplete({ score, elapsedMs, errors }){
+    this.stopTimer();
+    this.startTime = Date.now() - elapsedMs;
+    this.renderTimer();
+    alert(`Sudoku completato! Punteggio: ${score} · Errori: ${errors}`);
+    this.openPag('game');
+    this.requestPlayerName();
 }
 
 startGame(mode, puzzle, liv, elapsedMs = 0, config = null, lockedIndices = []){
@@ -774,7 +876,7 @@ renderTimer(){
             const remainingTenths = Math.floor((remainingMs % 1000) / 100);
             this.gameDeadlineEl.textContent = `LIMITE: ${String(remainingMinutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}.${remainingTenths}`;
             this.gameDeadlineEl.classList.toggle('danger', remainingMs <= 10000);
-        } else if(this.currentMode === 'match3') {
+        } else if(this.currentMode === 'match3' || this.currentMode === 'match3-1vs1') {
             this.gameDeadlineEl.textContent = 'MODALITÀ: MOSSE';
             this.gameDeadlineEl.classList.remove('danger');
         } else {

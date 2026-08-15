@@ -129,12 +129,17 @@
 
         <div onclick="playStart1vs1()" class="contact">
             <img class="pic imgPlaygame" src="https://latitanti.altervista.org/BG/img/png2.png" ></img>
-            <h2>1 VS 1</h2>
+            <h2>NUMBER BLAST 1 VS 1</h2>
             <div id='waitingplayer' class="hide">
             <i class="fa-solid fa-hourglass-start ">
                 <p id='waitingplayerText'> </p>
             </i>
             </div>
+        </div>
+
+        <div onclick="playSudoku()" class="contact">
+            <div class="pic imgPlaygame sudoku-menu-icon">9</div>
+            <h2>SUDOKU</h2>
         </div>
         <br>
          </div>
@@ -204,6 +209,10 @@
             user.socket.emit('gameOnline 1vs1','join' );
             document.getElementById('waitingplayerText').innerText=' Invio richiesta al server...';
             }
+
+        let playSudoku = ()=>{
+            user.socket.emit('sudoku start');
+        }
 
         </script>
 	</body>

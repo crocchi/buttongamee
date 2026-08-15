@@ -1,5 +1,6 @@
 const { saveScore, getTopScores, updateScoreNickname } = require('../db/scoreModel');
 const { createBoard, makeMove, levelDefinition } = require('../game/match3Engine');
+const { createSudoku, isComplete } = require('../game/sudokuEngine');
 
 // giocatori in attesa di un avversario per la modalità 1vs1
 const waitingQueue = [];
@@ -174,15 +175,28 @@ module.exports = (io, main) => {
     const match3Move = function (payload) {
         const socket = this;
         const game = socket.data.game;
-        if (!game || game.mode !== 'match3' || game.finishing || game.movesLeft <= 0) return;
+        if (!game || !['match3', 'match3-1vs1'].includes(game.mode) || game.finishing || game.movesLeft <= 0) return;
         const result = makeMove(game.board, payload && payload.from, payload && payload.to);
         if (!result.valid) {
             socket.emit('match3Invalid');
             return;
         }
         game.board = result.board;
-        game.score += result.score;
         game.movesLeft -= 1;
+
+        if (game.mode === 'match3-1vs1') {
+            game.scores.set(socket.id, (game.scores.get(socket.id) || 0) + result.score);
+            io.to(game.roomId).emit('match3State', {
+                mode: game.mode, board: game.board, movesLeft: game.movesLeft,
+                definition: game.definition, steps: result.steps, gained: result.score,
+                by: socket.id, playerScores: Object.fromEntries(game.scores),
+                elapsedMs: Date.now() - game.startTime,
+            });
+            if (game.movesLeft <= 0) void finishOneVsOne(game);
+            return;
+        }
+
+        game.score += result.score;
 
         if (game.score >= game.definition.targetScore) {
             const completedScore = game.score;
@@ -213,7 +227,7 @@ module.exports = (io, main) => {
         const socket = this;
         if (action !== 'join') return;
 
-        if (socket.data.game && socket.data.game.mode === '1vs1') return;
+        if (socket.data.game && socket.data.game.mode === 'match3-1vs1') return;
         if (waitingQueue.includes(socket)) {
             io.to(socket.id).emit('gameSet', { mode: '1vs1-wait', data: 'In attesa di un avversario...' });
             return;
@@ -236,21 +250,24 @@ module.exports = (io, main) => {
 
         // tabellone condiviso: stesso puzzle per entrambi, un bottone selezionato da un giocatore
         // non è selezionabile dall'altro finché non viene risolto (accoppiato o scartato)
-        const puzzle = generatePuzzle(20);
+        const definition = { ...levelDefinition(3), moves: 30, targetScore: null };
         const gameState = {
-            mode: '1vs1',
-            puzzle,
+            mode: 'match3-1vs1',
+            board: createBoard(definition.size),
+            definition,
+            movesLeft: definition.moves,
             startTime: Date.now(),
             roomId,
             decided: false,
-            matched: new Set(),
-            selections: new Map(), // socket.id -> indice in attesa di essere accoppiato
             scores: new Map([[socket.id, 0], [opponent.id, 0]]),
         };
         socket.data.game = gameState;
         opponent.data.game = gameState;
 
-        io.to(roomId).emit('gameSet', { mode: '1vs1', puzzle, roomId, elapsedMs: 0 });
+        io.to(roomId).emit('gameSet', {
+            mode: 'match3-1vs1', board: gameState.board, definition, movesLeft: definition.moves,
+            playerScores: Object.fromEntries(gameState.scores), roomId, elapsedMs: 0,
+        });
     };
 
     // risolve la fine di una partita 1vs1: salva i punteggi e dichiara vincitore/pareggio
@@ -490,7 +507,7 @@ module.exports = (io, main) => {
         clearCampaignDeadline(socket.data.game);
 
         const game = socket.data.game;
-        if (game && game.mode === '1vs1' && game.roomId && !game.decided) {
+        if (game && game.mode === 'match3-1vs1' && game.roomId && !game.decided) {
             game.decided = true;
             socket.to(game.roomId).emit('gameResult', {
                 result: 'win', reason: 'opponent-disconnected', elapsedMs: Date.now() - game.startTime,
@@ -517,6 +534,50 @@ module.exports = (io, main) => {
         }
     };
 
+    const sudokuStart = function () {
+        const socket = this;
+        removeFromWaitingQueue(socket);
+        clearCampaignDeadline(socket.data.game);
+        const { puzzle, solution } = createSudoku(42);
+        socket.data.game = {
+            mode: 'sudoku', board: puzzle.map(row => [...row]), solution,
+            fixed: puzzle.map(row => row.map(Boolean)), errors: 0, startTime: Date.now(), finishing: false,
+        };
+        socket.emit('sudokuSet', { board: puzzle, fixed: socket.data.game.fixed, errors: 0, elapsedMs: 0 });
+    };
+
+    const sudokuInput = async function (payload) {
+        const socket = this;
+        const game = socket.data.game;
+        if (!game || game.mode !== 'sudoku' || game.finishing) return;
+        const row = Number(payload && payload.row);
+        const col = Number(payload && payload.col);
+        const value = Number(payload && payload.value);
+        if (![row, col].every(n => Number.isInteger(n) && n >= 0 && n < 9)
+            || !Number.isInteger(value) || value < 1 || value > 9 || game.fixed[row][col]) return;
+        if (game.solution[row][col] !== value) {
+            game.errors += 1;
+            socket.emit('sudokuCell', { row, col, value, correct: false, errors: game.errors });
+            return;
+        }
+        game.board[row][col] = value;
+        socket.emit('sudokuCell', { row, col, value, correct: true, errors: game.errors });
+        if (!isComplete(game.board)) return;
+
+        game.finishing = true;
+        const elapsedMs = Date.now() - game.startTime;
+        const score = Math.max(100, Math.round(10000 - elapsedMs / 100 - game.errors * 500));
+        try {
+            const scoreId = await saveScore({ nickname: socket.data.username, mode: 'sudoku', score, elapsedMs, level: 1 });
+            if (!socket.data.renameableScoreIds) socket.data.renameableScoreIds = new Set();
+            socket.data.renameableScoreIds.add(scoreId);
+        } catch (e) {
+            console.error('Errore salvataggio Sudoku:', e.message);
+        }
+        socket.data.game = null;
+        socket.emit('sudokuComplete', { score, elapsedMs, errors: game.errors });
+    };
+
     const setScoreNickname = async function (value) {
         const socket = this;
         const nickname = normalizeNickname(value);
@@ -540,6 +601,7 @@ module.exports = (io, main) => {
     return {
         gameStart, gameOnline1vs1, gameClick, gameOver, gameDisconnectCleanup,
         statsRequest, setScoreNickname, match3Move,
+        sudokuStart, sudokuInput,
     };
 };
 
