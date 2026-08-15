@@ -4,6 +4,7 @@ const { createSudoku, isComplete } = require('../game/sudokuEngine');
 
 // giocatori in attesa di un avversario per la modalità 1vs1
 const waitingQueue = [];
+const pairsWaitingQueue = [];
 
 // livello massimo della campagna: oltre questo la partita finisce davvero
 const MAX_LEVEL = 100;
@@ -282,7 +283,11 @@ module.exports = (io, main) => {
         for (const [id, score] of entries) {
             const s = io.sockets.sockets.get(id);
             try {
-                const scoreId = await saveScore({ nickname: s ? s.data.username : 'anonimo', mode: '1vs1', score, elapsedMs, level: 1 });
+                const scoreId = await saveScore({
+                    nickname: s ? s.data.username : 'anonimo',
+                    mode: game.mode === 'pairs-1vs1' ? 'pairs-1vs1' : 'number-blast-1vs1',
+                    score, elapsedMs, level: 1,
+                });
                 savedScoreIds.set(id, scoreId);
             } catch (e) {
                 console.error('Errore salvataggio punteggio 1vs1:', e.message);
@@ -309,6 +314,114 @@ module.exports = (io, main) => {
         });
     };
 
+    const pairStart = function () {
+        const socket = this;
+        removeFromWaitingQueue(socket);
+        clearCampaignDeadline(socket.data.game);
+        const puzzle = generatePuzzle(20);
+        socket.data.game = {
+            mode: 'pairs', puzzle, matched: new Set(), pending: null,
+            score: 0, errors: 0, startTime: Date.now(), finishing: false,
+        };
+        socket.emit('gameSet', { mode: 'pairs', puzzle, elapsedMs: 0 });
+    };
+
+    const pairOnline1vs1 = function (action) {
+        const socket = this;
+        if (action !== 'join') return;
+        if (socket.data.game && socket.data.game.mode === 'pairs-1vs1') return;
+
+        removeFromWaitingQueue(socket);
+        if (pairsWaitingQueue.includes(socket)) {
+            socket.emit('gameSet', { mode: 'pairs-1vs1-wait', data: 'In attesa di un avversario...' });
+            return;
+        }
+
+        let opponent;
+        while (pairsWaitingQueue.length && !opponent) {
+            const candidate = pairsWaitingQueue.shift();
+            if (candidate !== socket && candidate.connected && !candidate.data.game) opponent = candidate;
+        }
+        if (!opponent) {
+            pairsWaitingQueue.push(socket);
+            socket.emit('gameSet', { mode: 'pairs-1vs1-wait', data: 'In attesa di un avversario...' });
+            return;
+        }
+
+        const roomId = `pairs-room-${opponent.id}-${socket.id}`;
+        socket.join(roomId);
+        opponent.join(roomId);
+        const puzzle = generatePuzzle(24);
+        const gameState = {
+            mode: 'pairs-1vs1', puzzle, matched: new Set(), selections: new Map(),
+            scores: new Map([[socket.id, 0], [opponent.id, 0]]),
+            startTime: Date.now(), roomId, decided: false, finishing: false,
+        };
+        socket.data.game = gameState;
+        opponent.data.game = gameState;
+        io.to(roomId).emit('gameSet', { mode: 'pairs-1vs1', puzzle, elapsedMs: 0 });
+    };
+
+    const finishPairs = async function (socket, game) {
+        if (game.finishing || socket.data.game !== game) return;
+        game.finishing = true;
+        const elapsedMs = Date.now() - game.startTime;
+        try {
+            const scoreId = await saveScore({
+                nickname: socket.data.username, mode: 'pairs', score: game.score,
+                elapsedMs, level: 1,
+            });
+            if (!socket.data.renameableScoreIds) socket.data.renameableScoreIds = new Set();
+            socket.data.renameableScoreIds.add(scoreId);
+        } catch (e) {
+            console.error('Errore salvataggio Coppie:', e.message);
+        }
+        socket.data.game = null;
+        socket.emit('pairsComplete', { score: game.score, elapsedMs, errors: game.errors });
+    };
+
+    const handlePairClick = function (socket, game, index) {
+        if (game.matched.has(index) || game.pending === index) return;
+        if (game.pending === null) {
+            game.pending = index;
+            socket.emit('buttonSelected', { index, by: socket.id });
+            return;
+        }
+        const pending = game.pending;
+        game.pending = null;
+        const value = game.puzzle[pending];
+        if (value !== game.puzzle[index]) {
+            game.errors += 1;
+            socket.emit('pairMismatch', { indices: [pending, index], errors: game.errors });
+            return;
+        }
+        game.matched.add(pending);
+        game.matched.add(index);
+        let points = value === 'point' ? 60 : 10;
+        const bonus = value === 'point' || value === 'bomb' ? value : null;
+        const extraIndices = [];
+        if (bonus === 'bomb') {
+            const candidates = new Map();
+            game.puzzle.forEach((tile, i) => {
+                if (game.matched.has(i) || tile === 'bomb' || tile === 'point') return;
+                if (!candidates.has(tile)) candidates.set(tile, []);
+                candidates.get(tile).push(i);
+            });
+            const pairs = Array.from(candidates.values()).filter(items => items.length >= 2);
+            if (pairs.length) {
+                const chosen = pairs[Math.floor(Math.random() * pairs.length)].slice(0, 2);
+                chosen.forEach(i => game.matched.add(i));
+                extraIndices.push(...chosen);
+                points += 10;
+            }
+        }
+        game.score += points;
+        socket.emit('pairMatched', {
+            indices: [pending, index], extraIndices, by: socket.id, bonus, points,
+        });
+        if (game.matched.size >= game.puzzle.length) void finishPairs(socket, game);
+    };
+
     // click su un bottone in modalità 1vs1: gestito interamente dal server per sincronizzare i due giocatori
     const gameClick = function (payload) {
         const socket = this;
@@ -318,11 +431,16 @@ module.exports = (io, main) => {
         const index = Number(payload && payload.index);
         if (!Number.isInteger(index) || index < 0 || index >= game.puzzle.length) return;
 
+        if (game.mode === 'pairs') {
+            handlePairClick(socket, game, index);
+            return;
+        }
+
         if (game.mode === 'campain') {
             handleCampaignClick(socket, game, index);
             return;
         }
-        if (game.mode !== '1vs1') return;
+        if (game.mode !== 'pairs-1vs1') return;
         if (game.matched.has(index)) return;
 
         // già selezionato (da questo o dall'altro giocatore): non selezionabile
@@ -507,7 +625,7 @@ module.exports = (io, main) => {
         clearCampaignDeadline(socket.data.game);
 
         const game = socket.data.game;
-        if (game && game.mode === 'match3-1vs1' && game.roomId && !game.decided) {
+        if (game && ['match3-1vs1', 'pairs-1vs1'].includes(game.mode) && game.roomId && !game.decided) {
             game.decided = true;
             socket.to(game.roomId).emit('gameResult', {
                 result: 'win', reason: 'opponent-disconnected', elapsedMs: Date.now() - game.startTime,
@@ -522,6 +640,7 @@ module.exports = (io, main) => {
     function removeFromWaitingQueue(socket) {
         let idx;
         while ((idx = waitingQueue.indexOf(socket)) !== -1) waitingQueue.splice(idx, 1);
+        while ((idx = pairsWaitingQueue.indexOf(socket)) !== -1) pairsWaitingQueue.splice(idx, 1);
     }
 
     const statsRequest = async function () {
@@ -602,6 +721,7 @@ module.exports = (io, main) => {
         gameStart, gameOnline1vs1, gameClick, gameOver, gameDisconnectCleanup,
         statsRequest, setScoreNickname, match3Move,
         sudokuStart, sudokuInput,
+        pairStart, pairOnline1vs1,
     };
 };
 

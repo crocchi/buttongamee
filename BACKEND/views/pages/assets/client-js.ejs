@@ -3,6 +3,7 @@
 // piccoli effetti sonori sintetizzati via Web Audio (nessun file audio da scaricare/ospitare)
 class Sfx {
     ctx = null;
+    enabled = localStorage.getItem('buttonGameAudio') !== 'off';
 
     ensureCtx(){
         if(!this.ctx){
@@ -14,6 +15,7 @@ class Sfx {
     }
 
     beep(freq = 440, duration = 0.12, type = 'sine', gain = 0.15){
+        if(!this.enabled) return;
         try {
             const ctx = this.ensureCtx();
             const osc = ctx.createOscillator();
@@ -155,6 +157,8 @@ gameErrorsEl = this.getEl('gameErrors');
 gameBonusMsgEl = this.getEl('gameBonusMsg');
 waitingPlayer = this.getEl('waitingplayer');
 waitingPlayerText = this.getEl('waitingplayerText');
+pairsWaitingPlayer = this.getEl('pairsWaitingPlayer');
+pairsWaitingText = this.getEl('pairsWaitingText');
 statsListEl = this.getEl('statsListEl');
 
 // STATO PARTITA IN CORSO
@@ -181,7 +185,27 @@ concealTimeout = null;
 
 constructor(){
     super();
+    this.setupSettings();
     this.bindGameEvents();
+}
+
+setupSettings(){
+    const audio = this.getEl('setting-audio');
+    const effects = this.getEl('setting-effects');
+    const status = this.getEl('settings-status-text');
+    if(!audio || !effects) return;
+    audio.checked = localStorage.getItem('buttonGameAudio') !== 'off';
+    effects.checked = localStorage.getItem('buttonGameEffects') !== 'off';
+    const apply = () => {
+        sfx.enabled = audio.checked;
+        document.body.classList.toggle('effects-off', !effects.checked);
+        localStorage.setItem('buttonGameAudio', audio.checked ? 'on' : 'off');
+        localStorage.setItem('buttonGameEffects', effects.checked ? 'on' : 'off');
+        status.textContent = `Audio ${audio.checked ? 'attivo' : 'disattivato'} · Animazioni ${effects.checked ? 'attive' : 'disattivate'}`;
+    };
+    audio.onchange = apply;
+    effects.onchange = apply;
+    apply();
 }
 
 // Get the <span> element that closes the modal
@@ -230,7 +254,7 @@ if(pageTemp.classList.contains("hide")){
 this.testoHeader.innerText=infoPage[`${page}`][1];
 this.logoHeader.className=infoPage[`${page}`][2];
 
-// la schermata di gioco occupa fino all'80% dello schermo, con scroll interno per i bottoni
+// la schermata di gioco scorre dal basso e occupa tutto lo schermo
 this.modalContent.classList.toggle('game-open', page === 'gameArea');
 
 if(page==='stat'){
@@ -268,6 +292,7 @@ bindGameEvents(){
     this.socket.on('sudokuSet', (payload) => this.setupSudoku(payload));
     this.socket.on('sudokuCell', (payload) => this.onSudokuCell(payload));
     this.socket.on('sudokuComplete', (payload) => this.onSudokuComplete(payload));
+    this.socket.on('pairsComplete', (payload) => this.onPairsComplete(payload));
     this.socket.on('statsData', (rows) => this.renderStats(rows));
 }
 
@@ -279,16 +304,22 @@ onGameSet(payload){
         return;
     }
 
-    if(mode === '1vs1-wait'){
-        if(this.waitingPlayer.classList.contains('hide')){
-            this.waitingPlayer.classList.toggle('hide');
-        }
-        this.waitingPlayerText.innerText = data;
+    if(mode === '1vs1-wait' || mode === 'pairs-1vs1-wait'){
+        const isPairsWaiting = mode === 'pairs-1vs1-wait';
+        const waitingBox = isPairsWaiting ? this.pairsWaitingPlayer : this.waitingPlayer;
+        const waitingText = isPairsWaiting ? this.pairsWaitingText : this.waitingPlayerText;
+        if(waitingBox && waitingBox.classList.contains('hide')) waitingBox.classList.remove('hide');
+        if(waitingText) waitingText.innerText = data;
+        if(isPairsWaiting && this.waitingPlayer) this.waitingPlayer.classList.add('hide');
+        if(!isPairsWaiting && this.pairsWaitingPlayer) this.pairsWaitingPlayer.classList.add('hide');
         return;
     }
 
     if(!this.waitingPlayer.classList.contains('hide')){
         this.waitingPlayer.classList.toggle('hide');
+    }
+    if(this.pairsWaitingPlayer && !this.pairsWaitingPlayer.classList.contains('hide')){
+        this.pairsWaitingPlayer.classList.add('hide');
     }
 
     if(levelComplete){
@@ -604,6 +635,15 @@ onSudokuComplete({ score, elapsedMs, errors }){
     this.requestPlayerName();
 }
 
+onPairsComplete({ score, elapsedMs, errors }){
+    this.stopTimer();
+    this.startTime = Date.now() - elapsedMs;
+    this.renderTimer();
+    alert(`Tutte le coppie trovate! Punteggio: ${score} · Errori: ${errors}`);
+    this.openPag('game');
+    this.requestPlayerName();
+}
+
 startGame(mode, puzzle, liv, elapsedMs = 0, config = null, lockedIndices = []){
     this.currentMode = mode;
     this.currentConfig = config;
@@ -620,9 +660,11 @@ startGame(mode, puzzle, liv, elapsedMs = 0, config = null, lockedIndices = []){
     this.buttonArea.className = '';
     this.buttonArea.style.removeProperty('--board-size');
     this.buttonArea.innerHTML = '';
-    this.gameLevelEl.innerText = mode === '1vs1'
-        ? '1 VS 1'
-        : `MONDO ${config ? config.world : 1} · LIVELLO ${liv || 1}${config && config.boss ? ' · BOSS' : ''}`;
+    this.gameLevelEl.innerText = mode === 'pairs'
+        ? 'COPPIE DI NUMERI · SINGLE PLAYER'
+        : (mode === 'pairs-1vs1'
+            ? 'COPPIE DI NUMERI · 1 VS 1'
+            : `MONDO ${config ? config.world : 1} · LIVELLO ${liv || 1}${config && config.boss ? ' · BOSS' : ''}`);
     this.renderMission();
     this.updateScoreboard();
 
@@ -673,8 +715,12 @@ startGame(mode, puzzle, liv, elapsedMs = 0, config = null, lockedIndices = []){
 
 renderMission(){
     if(!this.gameMissionEl) return;
-    if(this.currentMode === '1vs1'){
-        this.gameMissionEl.textContent = 'Trova più coppie del tuo avversario';
+    if(this.currentMode === 'pairs'){
+        this.gameMissionEl.textContent = 'Trova tutte le coppie uguali nel minor tempo possibile';
+        return;
+    }
+    if(this.currentMode === 'pairs-1vs1'){
+        this.gameMissionEl.textContent = 'Griglia condivisa: trova più coppie e totalizza più punti del tuo avversario';
         return;
     }
     const config = this.currentConfig || {};
@@ -738,8 +784,9 @@ onPairMatched({ indices, extraIndices, by, bonus, points, combo = 0, multiplier 
     if(bonus === 'point') this.showBonusMessage('Atom the Point: +50 punti extra!');
     if(bonus === 'bomb') this.showBonusMessage('Atom the Bomb: distrutta un\'altra coppia!');
 
-    if(this.currentMode === '1vs1'){
+    if(this.currentMode === 'pairs-1vs1'){
         if(by === this.socket.id){ this.my1v1Score += points; } else { this.opp1v1Score += points; }
+        this.remainingPairs -= (indices.length + (extraIndices || []).length) / 2;
     } else {
         this.score += points;
         this.remainingPairs -= (indices.length + (extraIndices || []).length) / 2;
@@ -751,7 +798,7 @@ onPairMatched({ indices, extraIndices, by, bonus, points, combo = 0, multiplier 
 
 onPairMismatch({ indices, penaltyMs = 0, errors, shuffle = false }){
     sfx.wrong();
-    if(this.currentMode !== '1vs1'){
+    if(this.currentMode !== 'pairs-1vs1'){
         this.combo = 0;
         this.errors = errors || this.errors + 1;
         if(penaltyMs){
@@ -826,12 +873,21 @@ showBonusMessage(text){
 }
 
 updateScoreboard(){
-    if(this.currentMode === '1vs1'){
+    if(this.currentMode === 'pairs-1vs1'){
         this.gameScoreEl.innerText = `Tu: ${this.my1v1Score}`;
         this.gameTotalScoreEl.innerText = `Avversario: ${this.opp1v1Score}`;
-        this.gameRemainingEl.innerText = '';
+        this.gameRemainingEl.innerText = `COPPIE RIMASTE: ${this.remainingPairs}`;
         this.gameComboEl.innerText = '';
         this.gameErrorsEl.innerText = '';
+        return;
+    }
+
+    if(this.currentMode === 'pairs'){
+        this.gameScoreEl.innerText = `PUNTEGGIO: ${this.score}`;
+        this.gameTotalScoreEl.innerText = '';
+        this.gameRemainingEl.innerText = `COPPIE RIMASTE: ${this.remainingPairs}`;
+        this.gameComboEl.innerText = '';
+        this.gameErrorsEl.innerText = `ERRORI: ${this.errors}`;
         return;
     }
 
@@ -945,9 +1001,26 @@ renderStats(rows){
     this.statsListEl.replaceChildren();
     rows.forEach((r, i) => {
         const item = document.createElement('li');
-        item.textContent = `${i + 1}. ${r.nickname} - ${r.score} pt (${r.mode})`;
+        const elapsed = Number(r.elapsed_ms) || 0;
+        const minutes = Math.floor(elapsed / 60000);
+        const seconds = Math.floor((elapsed % 60000) / 1000);
+        const modeNames = {
+            'pairs': 'Coppie · Single', 'pairs-1vs1': 'Coppie · 1 vs 1',
+            'number-blast-1vs1': 'Number Blast · 1 vs 1', 'campaign-total': 'Number Blast',
+            'campain': 'Coppie · Campagna', '1vs1': 'Coppie · 1 vs 1', 'sudoku': 'Sudoku',
+        };
+        item.className = 'leaderboard-item';
+        item.innerHTML = `<span class="rank">${i + 1}</span><span class="player"><strong></strong><small></small></span><span class="result"><strong>${Number(r.score) || 0} pt</strong><small>${minutes}:${String(seconds).padStart(2, '0')} · Liv. ${Number(r.level) || 1}</small></span>`;
+        item.querySelector('.player strong').textContent = r.nickname || 'Giocatore';
+        item.querySelector('.player small').textContent = modeNames[r.mode] || r.mode || 'Gioco';
         this.statsListEl.appendChild(item);
     });
+    if(rows.length === 0){
+        const empty = document.createElement('li');
+        empty.className = 'leaderboard-empty';
+        empty.textContent = 'Nessun punteggio registrato. Completa una partita per entrare in classifica!';
+        this.statsListEl.appendChild(empty);
+    }
 }
 
 }

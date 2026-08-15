@@ -79,3 +79,63 @@ test('i livelli somma 10 generano soltanto coppie compatibili', () => {
         assert.equal(valuesMatch(value, 10 - value, 'sum10'), true);
     }
 });
+
+test('la modalità Coppie crea 20 tessere e valida gli abbinamenti sul server', () => {
+    const { socket, emitted, handlers } = makeHarness('pairs-player');
+    handlers.pairStart.call(socket);
+
+    assert.equal(socket.data.game.mode, 'pairs');
+    assert.equal(socket.data.game.puzzle.length, 20);
+
+    const firstIndex = socket.data.game.puzzle.findIndex(value =>
+        socket.data.game.puzzle.filter(item => item === value).length === 2
+    );
+    const value = socket.data.game.puzzle[firstIndex];
+    const secondIndex = socket.data.game.puzzle.findIndex((item, index) => item === value && index !== firstIndex);
+
+    handlers.gameClick.call(socket, { index: firstIndex });
+    handlers.gameClick.call(socket, { index: secondIndex });
+
+    assert.equal(socket.data.game.matched.has(firstIndex), true);
+    assert.equal(socket.data.game.matched.has(secondIndex), true);
+    assert.equal(emitted.some(({ event }) => event === 'pairMatched'), true);
+});
+
+test('Coppie 1vs1 abbina due giocatori su una griglia condivisa', () => {
+    const emitted = [];
+    const roomMembers = new Map();
+    const makeSocket = id => ({
+        id, connected: true, data: { username: id },
+        emit(event, payload) { emitted.push({ target: id, event, payload }); },
+        join(room) {
+            if (!roomMembers.has(room)) roomMembers.set(room, new Set());
+            roomMembers.get(room).add(id);
+        },
+        leave() {},
+        to() { return { emit() {} }; },
+    });
+    const first = makeSocket('pairs-a');
+    const second = makeSocket('pairs-b');
+    const sockets = new Map([[first.id, first], [second.id, second]]);
+    const io = {
+        sockets: { sockets },
+        to(target) {
+            return {
+                emit(event, payload) {
+                    const recipients = roomMembers.get(target) || new Set([target]);
+                    recipients.forEach(id => emitted.push({ target: id, event, payload }));
+                },
+            };
+        },
+    };
+    const handlers = require('../event/game')(io, {});
+
+    handlers.pairOnline1vs1.call(first, 'join');
+    handlers.pairOnline1vs1.call(second, 'join');
+
+    assert.equal(first.data.game, second.data.game);
+    assert.equal(first.data.game.mode, 'pairs-1vs1');
+    assert.equal(first.data.game.puzzle.length, 24);
+    assert.equal(first.data.game.scores.size, 2);
+    assert.equal(emitted.filter(({ event }) => event === 'gameSet').some(({ payload }) => payload.mode === 'pairs-1vs1'), true);
+});

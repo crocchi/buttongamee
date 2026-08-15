@@ -59,60 +59,41 @@
 
                     <!--        PAGINA CONFIGURAZIONE           -->
                     <div id='modal-conf-page' class="modal-body hide">
-                        <h2>COnfigurazioni</h2>
-                        <br>
-                        <div class="col-6 col-12-small">
-                            <input type="checkbox" id="demo-button" name="demo-button" checked>
-                            <label for="demo-button">bottone effettoCiakka</label>
-
-                            <input type="checkbox" id="demo-human2" name="demo-human2" checked>
-                            <label for="demo-human2">AUDIO VOLUME</label>
-                        </div>
-                     
-
-                        <div class="col-6 col-12-xsmall">
-                            <div class="contact">
-                                <div class="pic rogers"></div>
-                                <div class="badge"></div>
-                                <input type="text" name="demo-name" id="demo-name" value="" placeholder="Name" />
-                                <button>SAVE</button>
+                        <section class="settings-panel">
+                            <div class="panel-intro">
+                                <span class="fa-solid fa-sliders"></span>
+                                <div>
+                                    <h2>Configurazioni</h2>
+                                    <p>Personalizza l’esperienza di gioco. Le preferenze restano salvate su questo dispositivo.</p>
+                                </div>
                             </div>
-                        <br>
-                        </div>
-
-                        <div class="col-6 col-12-xsmall">
-                            <div class="">
-                                <h2>Browser detect</h2>
-                                <button onclick="browserCheck()">Check</button>
-                                <textarea id="browserTextArea" name="demo-message" id="demo-message" placeholder="Enter your message" rows="3"></textarea>
-                          		
-                               	
+                            <label class="setting-row" for="setting-audio">
+                                <span><strong>Effetti sonori</strong><small>Suoni per selezioni, errori e combinazioni</small></span>
+                                <input type="checkbox" id="setting-audio" checked>
+                                <i class="setting-switch" aria-hidden="true"></i>
+                            </label>
+                            <label class="setting-row" for="setting-effects">
+                                <span><strong>Animazioni</strong><small>Ingrandimenti, esplosioni e spostamenti delle tessere</small></span>
+                                <input type="checkbox" id="setting-effects" checked>
+                                <i class="setting-switch" aria-hidden="true"></i>
+                            </label>
+                            <div class="settings-status">
+                                <span class="fa-solid fa-circle-check"></span>
+                                <span id="settings-status-text">Preferenze attive</span>
                             </div>
-                        <br>
-                        </div>
-
-                        <div class="col-6 col-12-small">
-                           	
-                        </div>
-
-                        <div class="col-12">
-                            <select name="demo-category" id="demo-category">
-                                <option value="">- Category -</option>
-                                <option value="1">Manufacturing</option>
-                                <option value="1">Shipping</option>
-                                <option value="1">Administration</option>
-                                <option value="1">Human Resources</option>
-                            </select>
-                        </div>
-                        <br>
+                        </section>
                     </div> 
 
 
     <!--          PAGINA STATS           -->
                     <div id='modal-conf-stat' class="modal-body hide">
-                        <h2>Classifica</h2>
-                        <br>
-                        <ul id="statsListEl"></ul>
+                        <section class="leaderboard-panel">
+                            <div class="panel-intro">
+                                <span class="fa-solid fa-trophy"></span>
+                                <div><h2>Classifica</h2><p>I migliori punteggi di tutte le modalità.</p></div>
+                            </div>
+                            <ol id="statsListEl" class="leaderboard-list"></ol>
+                        </section>
                     </div> 
 
 
@@ -140,6 +121,17 @@
         <div onclick="playSudoku()" class="contact">
             <div class="pic imgPlaygame sudoku-menu-icon">9</div>
             <h2>SUDOKU</h2>
+        </div>
+
+        <div onclick="togglePairsModes(event)" class="contact game-mode-card" id="pairsGameCard">
+            <div class="pic imgPlaygame pairs-menu-icon">7·7</div>
+            <h2>COPPIE DI NUMERI</h2>
+            <p class="mode-hint">Scegli come giocare</p>
+            <div id="pairsModeSelector" class="mode-selector hide">
+                <button type="button" onclick="playPairs(event)"><span class="fa-solid fa-user"></span> SINGLE PLAYER</button>
+                <button type="button" onclick="playPairs1vs1(event)"><span class="fa-solid fa-user-group"></span> 1 VS 1</button>
+                <div id="pairsWaitingPlayer" class="waiting-mode hide"><span class="fa-solid fa-hourglass-start"></span> <span id="pairsWaitingText"></span></div>
+            </div>
         </div>
         <br>
          </div>
@@ -212,6 +204,25 @@
 
         let playSudoku = ()=>{
             user.socket.emit('sudoku start');
+        }
+
+        let togglePairsModes = (event)=>{
+            event.stopPropagation();
+            const selector = document.getElementById('pairsModeSelector');
+            selector.classList.toggle('hide');
+            document.getElementById('pairsGameCard').classList.toggle('expanded', !selector.classList.contains('hide'));
+        }
+
+        let playPairs = (event)=>{
+            if(event) event.stopPropagation();
+            user.socket.emit('pairs start');
+        }
+
+        let playPairs1vs1 = (event)=>{
+            if(event) event.stopPropagation();
+            user.socket.emit('pairsOnline 1vs1', 'join');
+            document.getElementById('pairsWaitingPlayer').classList.remove('hide');
+            document.getElementById('pairsWaitingText').innerText = 'Ricerca avversario...';
         }
 
         </script>
