@@ -2293,12 +2293,14 @@ body.effects-off .setting-switch::after {
     align-items: center;
     gap: 14px;
     padding: 8px;
+    width: 100%;
+    box-sizing: border-box;
     overflow: auto;
 }
 
 .sudoku-grid {
     display: grid;
-    grid-template-columns: repeat(9, minmax(32px, 50px));
+    grid-template-columns: repeat(var(--sudoku-size, 9), minmax(36px, var(--sudoku-cell-max, 50px)));
     border: 3px solid #17344d;
     background: #17344d;
     gap: 1px;
@@ -2316,10 +2318,8 @@ body.effects-off .setting-switch::after {
     font-weight: 800;
     transition: background .15s, box-shadow .15s, transform .15s;
 }
-.sudoku-cell:nth-child(3n) { border-right: 2px solid #17344d; }
-.sudoku-cell:nth-child(9n) { border-right: 0; }
-.sudoku-cell:nth-child(n+19):nth-child(-n+27),
-.sudoku-cell:nth-child(n+46):nth-child(-n+54) { border-bottom: 2px solid #17344d; }
+.sudoku-cell.box-right { border-right: 3px solid #17344d; }
+.sudoku-cell.box-bottom { border-bottom: 3px solid #17344d; }
 .sudoku-cell.fixed { background: #dbe8f2; color: #152631; }
 .sudoku-cell.solved { background: #e0f8df; color: #167139; }
 .sudoku-cell.selected { background: #fff3a6; box-shadow: inset 0 0 0 3px #ffb300; transform: scale(1.08); z-index: 2; }
@@ -2327,7 +2327,7 @@ body.effects-off .setting-switch::after {
 
 .sudoku-pad {
     display: grid;
-    grid-template-columns: repeat(9, minmax(30px, 44px));
+    grid-template-columns: repeat(var(--sudoku-values, 9), minmax(34px, 48px));
     gap: 5px;
 }
 .sudoku-pad button {
@@ -2340,8 +2340,8 @@ body.effects-off .setting-switch::after {
 }
 
 @media screen and (max-width: 600px) {
-    .sudoku-grid { grid-template-columns: repeat(9, minmax(28px, 1fr)); width: 100%; }
-    .sudoku-pad { grid-template-columns: repeat(9, 1fr); width: 100%; }
+    .sudoku-grid { grid-template-columns: repeat(var(--sudoku-size, 9), minmax(28px, 1fr)); width: min(100%, 500px); }
+    .sudoku-pad { grid-template-columns: repeat(var(--sudoku-values, 9), 1fr); width: min(100%, 500px); }
 }
 .starr{
     background-repeat: no-repeat;

@@ -695,16 +695,24 @@ spawnMatch3Particles(tile, cascade){
     }
 }
 
-setupSudoku({ board, fixed, errors = 0, elapsedMs = 0, adventureNode = null }){
+setupSudoku({
+    board, fixed, errors = 0, elapsedMs = 0, adventureNode = null,
+    level = 1, definition = null, totalScore = 0, levelComplete = null,
+}){
+    definition = definition || { size: board.length, maxValue: 9, boxRows: 3, boxCols: 3, label: 'Sudoku' };
     this.currentMode = 'sudoku';
     this.currentConfig = null;
     this.errors = errors;
     this.sudokuSelected = null;
     this.startTimer(elapsedMs);
-    this.gameLevelEl.textContent = adventureNode ? `MAPPA #${adventureNode.id} · ${adventureNode.title}` : 'SUDOKU · CLASSICO';
-    this.gameMissionEl.textContent = 'Completa ogni riga, colonna e riquadro 3×3 con i numeri da 1 a 9';
-    this.gameScoreEl.textContent = 'DIFFICOLTÀ: MEDIA';
-    this.gameTotalScoreEl.textContent = '';
+    this.gameLevelEl.textContent = adventureNode
+        ? `MAPPA #${adventureNode.id} · ${adventureNode.title}`
+        : `SUDOKU · LIVELLO ${level}/10${level === 10 ? ' · BOSS' : ''}`;
+    this.gameMissionEl.textContent = definition.size === 3
+        ? 'Completa il quadrato usando una sola volta tutti i numeri da 1 a 9'
+        : `Completa righe, colonne e riquadri ${definition.boxRows}×${definition.boxCols} con i numeri da 1 a ${definition.maxValue}`;
+    this.gameScoreEl.textContent = `DIFFICOLTÀ: ${definition.label.toUpperCase()}`;
+    this.gameTotalScoreEl.textContent = adventureNode ? '' : `TOTALE: ${totalScore}`;
     this.gameRemainingEl.textContent = `ERRORI: ${errors}`;
     this.gameComboEl.textContent = '';
     this.gameErrorsEl.textContent = '';
@@ -713,9 +721,13 @@ setupSudoku({ board, fixed, errors = 0, elapsedMs = 0, adventureNode = null }){
 
     const grid = document.createElement('div');
     grid.className = 'sudoku-grid';
+    grid.style.setProperty('--sudoku-size', definition.size);
+    grid.style.setProperty('--sudoku-cell-max', definition.size <= 3 ? '82px' : (definition.size <= 4 ? '70px' : (definition.size <= 6 ? '58px' : '50px')));
     board.forEach((line, row) => line.forEach((value, col) => {
         const cell = document.createElement('button');
         cell.className = 'sudoku-cell' + (fixed[row][col] ? ' fixed' : ' empty');
+        if((col + 1) % definition.boxCols === 0 && col < definition.size - 1) cell.classList.add('box-right');
+        if((row + 1) % definition.boxRows === 0 && row < definition.size - 1) cell.classList.add('box-bottom');
         cell.dataset.row = row;
         cell.dataset.col = col;
         cell.textContent = value || '';
@@ -731,7 +743,8 @@ setupSudoku({ board, fixed, errors = 0, elapsedMs = 0, adventureNode = null }){
 
     const pad = document.createElement('div');
     pad.className = 'sudoku-pad';
-    for(let value = 1; value <= 9; value++){
+    pad.style.setProperty('--sudoku-values', definition.maxValue);
+    for(let value = 1; value <= definition.maxValue; value++){
         const button = document.createElement('button');
         button.textContent = value;
         button.onclick = () => {
@@ -743,6 +756,10 @@ setupSudoku({ board, fixed, errors = 0, elapsedMs = 0, adventureNode = null }){
     }
     this.buttonArea.append(grid, pad);
     this.openPag('gameArea');
+    if(levelComplete){
+        sfx.levelUp();
+        this.showBonusMessage(`Livello ${levelComplete.level} completato! +${levelComplete.score} punti`);
+    }
 }
 
 onSudokuCell({ row, col, value, correct, errors }){
@@ -769,11 +786,11 @@ onSudokuCell({ row, col, value, correct, errors }){
     }
 }
 
-onSudokuComplete({ score, elapsedMs, errors }){
+onSudokuComplete({ score, elapsedMs, errors, level = 10 }){
     this.stopTimer();
     this.startTime = Date.now() - elapsedMs;
     this.renderTimer();
-    alert(`Sudoku completato! Punteggio: ${score} · Errori: ${errors}`);
+    alert(`Campagna Sudoku completata fino al livello ${level}! Punteggio: ${score} · Errori: ${errors}`);
     this.openPag('game');
     this.requestPlayerName();
 }

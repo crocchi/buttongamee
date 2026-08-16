@@ -1,6 +1,6 @@
 const { saveScore, getTopScores, getLeaderboardsByGame, updateScoreNickname } = require('../db/scoreModel');
 const { createBoard, makeMove, levelDefinition } = require('../game/match3Engine');
-const { createSudoku, isComplete } = require('../game/sudokuEngine');
+const { createSudokuForLevel, isComplete } = require('../game/sudokuEngine');
 const { createEscapePuzzle } = require('../game/escapeMathEngine');
 const { getAdventureProgress, isAdventureNodeUnlocked, saveAdventureProgress } = require('../db/adventureModel');
 const { ADVENTURE_WORLDS, ADVENTURE_NODES, getAdventureNode, calculateStars } = require('../game/adventureMap');
@@ -1171,12 +1171,18 @@ module.exports = (io, main) => {
         clearEscapeDeadline(socket.data.game);
         clearCampaignDeadline(socket.data.game);
         clearSelectionTimers(socket.data.game);
-        const { puzzle, solution } = createSudoku(42);
+        const now = Date.now();
+        const { puzzle, solution, definition } = createSudokuForLevel(1);
         socket.data.game = {
             mode: 'sudoku', board: puzzle.map(row => [...row]), solution,
-            fixed: puzzle.map(row => row.map(Boolean)), errors: 0, startTime: Date.now(), finishing: false,
+            fixed: puzzle.map(row => row.map(Boolean)), errors: 0, totalErrors: 0,
+            level: 1, definition, score: 0, totalScore: 0,
+            startTime: now, campaignStartTime: now, finishing: false,
         };
-        socket.emit('sudokuSet', { board: puzzle, fixed: socket.data.game.fixed, errors: 0, elapsedMs: 0 });
+        socket.emit('sudokuSet', {
+            board: puzzle, fixed: socket.data.game.fixed, errors: 0, elapsedMs: 0,
+            level: 1, definition, totalScore: 0,
+        });
     };
 
     const sudokuInput = async function (payload) {
@@ -1186,8 +1192,9 @@ module.exports = (io, main) => {
         const row = Number(payload && payload.row);
         const col = Number(payload && payload.col);
         const value = Number(payload && payload.value);
-        if (![row, col].every(n => Number.isInteger(n) && n >= 0 && n < 9)
-            || !Number.isInteger(value) || value < 1 || value > 9 || game.fixed[row][col]) return;
+        const size = game.definition.size;
+        if (![row, col].every(n => Number.isInteger(n) && n >= 0 && n < size)
+            || !Number.isInteger(value) || value < 1 || value > game.definition.maxValue || game.fixed[row][col]) return;
         if (game.solution[row][col] !== value) {
             game.errors += 1;
             socket.emit('sudokuCell', { row, col, value, correct: false, errors: game.errors });
@@ -1198,21 +1205,41 @@ module.exports = (io, main) => {
         if (!isComplete(game.board)) return;
 
         game.finishing = true;
-        const elapsedMs = Date.now() - game.startTime;
-        const score = Math.max(100, Math.round(10000 - elapsedMs / 100 - game.errors * 500));
+        const levelElapsedMs = Date.now() - game.startTime;
+        const elapsedMs = Date.now() - game.campaignStartTime;
+        const score = Math.max(100, Math.round(game.level * 1500 + 5000 - levelElapsedMs / 100 - game.errors * 400));
         if (game.adventureNodeId) {
             void completeAdventureNode(socket, game, score, { errors: game.errors, lives: 3 });
             return;
         }
+
+        const totalScore = game.totalScore + score;
+        const totalErrors = game.totalErrors + game.errors;
+        if (game.level < 10) {
+            const nextLevel = game.level + 1;
+            const next = createSudokuForLevel(nextLevel);
+            socket.data.game = {
+                mode: 'sudoku', board: next.puzzle.map(row => [...row]), solution: next.solution,
+                fixed: next.puzzle.map(row => row.map(Boolean)), errors: 0, totalErrors,
+                level: nextLevel, definition: next.definition, score: 0, totalScore,
+                startTime: Date.now(), campaignStartTime: game.campaignStartTime, finishing: false,
+            };
+            socket.emit('sudokuSet', {
+                board: next.puzzle, fixed: socket.data.game.fixed, errors: 0, elapsedMs,
+                level: nextLevel, definition: next.definition, totalScore,
+                levelComplete: { level: game.level, score },
+            });
+            return;
+        }
         try {
-            const scoreId = await saveScore({ nickname: socket.data.username, mode: 'sudoku', score, elapsedMs, level: 1 });
+            const scoreId = await saveScore({ nickname: socket.data.username, mode: 'sudoku', score: totalScore, elapsedMs, level: 10 });
             if (!socket.data.renameableScoreIds) socket.data.renameableScoreIds = new Set();
             socket.data.renameableScoreIds.add(scoreId);
         } catch (e) {
             console.error('Errore salvataggio Sudoku:', e.message);
         }
         socket.data.game = null;
-        socket.emit('sudokuComplete', { score, elapsedMs, errors: game.errors });
+        socket.emit('sudokuComplete', { score: totalScore, elapsedMs, errors: totalErrors, level: 10 });
     };
 
     const adventureRequest = async function () {
@@ -1291,16 +1318,19 @@ module.exports = (io, main) => {
             return;
         }
 
-        const blanks = Math.min(50, 24 + node.difficulty * 2);
-        const { puzzle, solution } = createSudoku(blanks);
+        const sudokuLevels = { 4: 1, 8: 4, 13: 7, 16: 9, 20: 10 };
+        const sudokuLevel = sudokuLevels[node.id] || Math.min(10, node.difficulty);
+        const { puzzle, solution, definition } = createSudokuForLevel(sudokuLevel);
         socket.data.game = {
             mode: 'sudoku', board: puzzle.map(row => [...row]), solution,
-            fixed: puzzle.map(row => row.map(Boolean)), errors: 0, startTime: now, finishing: false,
+            fixed: puzzle.map(row => row.map(Boolean)), errors: 0, totalErrors: 0,
+            level: sudokuLevel, definition, score: 0, totalScore: 0,
+            startTime: now, campaignStartTime: now, finishing: false,
             adventureNodeId: node.id, adventureNode: node, adventureStartTime: now,
         };
         socket.emit('sudokuSet', {
             board: puzzle, fixed: socket.data.game.fixed, errors: 0, elapsedMs: 0,
-            adventureNode: node,
+            adventureNode: node, level: sudokuLevel, definition, totalScore: 0,
         });
     };
 

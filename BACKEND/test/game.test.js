@@ -292,3 +292,21 @@ test('Escape Math 1vs1 abbina due giocatori con gli stessi dieci enigmi', () => 
     clearTimeout(game.escapeTimers.get(first.id));
     clearTimeout(game.escapeTimers.get(second.id));
 });
+
+test('la campagna Sudoku parte da un quadrato 3x3 e avanza al 4x4', () => {
+    const { socket, handlers } = makeHarness('sudoku-campaign-player');
+    handlers.sudokuStart.call(socket);
+    assert.equal(socket.data.game.level, 1);
+    assert.equal(socket.data.game.definition.size, 3);
+    assert.equal(socket.data.game.board.flat().filter(value => value === 0).length, 3);
+
+    const game = socket.data.game;
+    game.board.forEach((row, rowIndex) => row.forEach((value, colIndex) => {
+        if (!value) handlers.sudokuInput.call(socket, {
+            row: rowIndex, col: colIndex, value: game.solution[rowIndex][colIndex],
+        });
+    }));
+
+    assert.equal(socket.data.game.level, 2);
+    assert.equal(socket.data.game.definition.size, 4);
+});
