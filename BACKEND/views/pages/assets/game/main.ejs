@@ -1,0 +1,15 @@
+<script>
+
+// esposto su window per ispezione/debug (devtools, script di verifica automatizzati)
+window.buttonGame = new Phaser.Game({
+    type: Phaser.AUTO,
+    parent: 'game-root',
+    backgroundColor: '#0b0f13',
+    scale: {
+        mode: Phaser.Scale.RESIZE,
+        width: window.innerWidth,
+        height: window.innerHeight,
+    },
+    scene: [BootScene, HomeScene, ModeSelectScene, SettingsScene, StatsScene, AdventureMapScene, PairsScene, Match3Scene, SudokuScene, EscapeMathScene],
+});
+</script>

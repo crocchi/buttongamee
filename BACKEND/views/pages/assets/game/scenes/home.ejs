@@ -1,0 +1,89 @@
+<script>
+
+const HOME_MODAL_SCENES = ['ModeSelect', 'AdventureMap', 'Stats', 'Settings'];
+
+class HomeScene extends Phaser.Scene {
+    constructor(){ super('Home'); }
+
+    create(){
+        const { width, height } = this.scale;
+        this.drawBackground(width, height);
+
+        this.add.text(width / 2, height * 0.22, 'BUTTONGAME', {
+            fontFamily: THEME.font, fontSize: '46px', fontStyle: '900', color: THEME.text,
+        }).setOrigin(0.5);
+        this.add.text(width / 2, height * 0.22 + 42, 'Numeri, coppie e sfide a tempo', {
+            fontFamily: THEME.font, fontSize: '18px', color: THEME.textMuted,
+        }).setOrigin(0.5);
+
+        const navItems = [
+            { label: 'Gioca', icon: '▶', scene: 'ModeSelect' },
+            { label: 'Avventura', icon: '🗺', scene: 'AdventureMap' },
+            { label: 'Classifica', icon: '★', scene: 'Stats' },
+            { label: 'Impostazioni', icon: '⚙', scene: 'Settings' },
+        ];
+        this.buildNav(navItems, width, height);
+
+        this.usernameText = this.add.text(width - 20, 20, socketService.username ? `USER: ${socketService.username}` : '', {
+            fontFamily: THEME.font, fontSize: '14px', color: THEME.textMuted,
+        }).setOrigin(1, 0);
+
+        this.onNick = (data) => this.usernameText.setText(`USER: ${data.msg}`);
+        socketService.on('setNick', this.onNick);
+        this.events.once('shutdown', () => socketService.off('setNick', this.onNick));
+    }
+
+    // In riga singola su schermi larghi; su schermi stretti (mobile) passa a una griglia 2×2
+    // per non far uscire i bottoni dal bordo (successo su viewport 390px, prima tagliati).
+    buildNav(navItems, width, height){
+        const gap = 16;
+        const margin = 40;
+        const available = width - margin * 2;
+        const idealWidth = 220;
+        const singleRowWidth = navItems.length * idealWidth + (navItems.length - 1) * gap;
+
+        if(singleRowWidth <= available){
+            const startX = width / 2 - singleRowWidth / 2 + idealWidth / 2;
+            navItems.forEach((item, i) => {
+                new UIButton(this, startX + i * (idealWidth + gap), height * 0.5, idealWidth, 56, item.label, {
+                    icon: item.icon, onClick: () => this.openScene(item.scene),
+                });
+            });
+            return;
+        }
+
+        const cols = 2;
+        const rows = Math.ceil(navItems.length / cols);
+        const buttonWidth = Math.min(idealWidth, (available - gap * (cols - 1)) / cols);
+        const buttonHeight = 56;
+        const totalWidth = cols * buttonWidth + (cols - 1) * gap;
+        const totalHeight = rows * buttonHeight + (rows - 1) * gap;
+        const startX = width / 2 - totalWidth / 2 + buttonWidth / 2;
+        const startY = height * 0.5 - totalHeight / 2 + buttonHeight / 2;
+
+        navItems.forEach((item, i) => {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            new UIButton(this, startX + col * (buttonWidth + gap), startY + row * (buttonHeight + gap), buttonWidth, buttonHeight, item.label, {
+                icon: item.icon, fontSize: buttonWidth < 180 ? 16 : 20,
+                onClick: () => this.openScene(item.scene),
+            });
+        });
+    }
+
+    drawBackground(width, height){
+        const g = this.add.graphics();
+        g.fillGradientStyle(THEME.bgTop, THEME.bgTop, THEME.bgBottom, THEME.bgBottom, 1);
+        g.fillRect(0, 0, width, height);
+    }
+
+    openScene(key){
+        HOME_MODAL_SCENES.forEach((k) => {
+            if(k !== key && this.scene.isActive(k)) this.scene.stop(k);
+        });
+        if(this.scene.isActive(key)) return;
+        this.scene.launch(key);
+        this.scene.bringToTop(key);
+    }
+}
+</script>

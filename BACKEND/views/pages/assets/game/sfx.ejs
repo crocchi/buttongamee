@@ -1,0 +1,50 @@
+<script>
+
+// piccoli effetti sonori sintetizzati via Web Audio (nessun file audio da scaricare/ospitare)
+class Sfx {
+    ctx = null;
+    enabled = localStorage.getItem('buttonGameAudio') !== 'off';
+
+    ensureCtx(){
+        if(!this.ctx){
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            this.ctx = new AudioCtx();
+        }
+        if(this.ctx.state === 'suspended') this.ctx.resume();
+        return this.ctx;
+    }
+
+    beep(freq = 440, duration = 0.12, type = 'sine', gain = 0.15){
+        if(!this.enabled) return;
+        try {
+            const ctx = this.ensureCtx();
+            const osc = ctx.createOscillator();
+            const g = ctx.createGain();
+            osc.type = type;
+            osc.frequency.value = freq;
+            osc.connect(g).connect(ctx.destination);
+
+            const now = ctx.currentTime;
+            g.gain.setValueAtTime(gain, now);
+            g.gain.exponentialRampToValueAtTime(0.001, now + duration);
+            osc.start(now);
+            osc.stop(now + duration);
+        } catch (e) {
+            // audio non disponibile nel browser: ignora silenziosamente
+        }
+    }
+
+    match(){ this.beep(660, 0.12, 'triangle', 0.18); }
+    wrong(){ this.beep(160, 0.2, 'sawtooth', 0.12); }
+    bomb(){ this.beep(90, 0.3, 'square', 0.22); }
+    point(){
+        this.beep(880, 0.15, 'sine', 0.2);
+        setTimeout(() => this.beep(1100, 0.15, 'sine', 0.15), 90);
+    }
+    levelUp(){
+        [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => this.beep(f, 0.15, 'triangle', 0.2), i * 110));
+    }
+}
+
+const sfx = new Sfx();
+</script>

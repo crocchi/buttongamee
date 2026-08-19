@@ -1,308 +1,33 @@
 <!DOCTYPE HTML>
 <html>
 	<head>
-			<title>ButtonGame v.0.4 - #js #mysql #nodejs #socket.io #ejs #express - template Aerial by HTML5 UP</title>
+		<title>ButtonGame v.0.5 - #js #mysql #nodejs #socket.io #phaser #express</title>
 		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-       	<link crossorigin="anonymous" rel="icon" href="https://latitanti.altervista.org/BG/icoLogo.png" sizes="32x32">
-        <%- include('./assets/css'); %>
+		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
+		<link crossorigin="anonymous" rel="icon" href="https://latitanti.altervista.org/BG/icoLogo.png" sizes="32x32">
+		<%- include('./assets/css'); %>
 	</head>
-	<body class="is-preload">
-		<div id="wrapper">
-			<div id="bg"></div>
-			<div id="overlay"></div>
-			<div id="main">
-                
+	<body>
+		<div id="game-root"></div>
 
-				<!-- Header -->
-					<header id="header">
-                        
-                        <img src="https://latitanti.altervista.org/logoBG.png" class="fa-solid fa-play"></img>
-							<h1>ButtonGame v.0.4</h1>
-                        <h2 class="popupDesk">In questo puzzle dovrete accoppiare i numeri uguali.</h2>
-                        
-						<p>#nodejs #socket.io &nbsp;&bull;&nbsp;#ejs #express &nbsp;&bull;&nbsp; #Render Web Service</p>
-                        <ul class="popupDesk">  
-                            <li> bottoni con i numeri uguali avranno anche lo stesso colore </li>
-                            <li> Cerca di distruggere tutti i bottoni per ricevere il max punteggio </li>
-                        </ul>
-						<nav>
-							<ul>
-							<!--	<li><a href="#" class="fa-solid fa-house"><span class="label">Home</span></a></li>-->
-								<li><a href="#" id='play' class="fa-solid fa-play"><span class="label">PlayGame</span></a></li>
-								<li><a href="#" id='adventure' class="fa-solid fa-map-location-dot"><span class="label">Avventura</span></a></li>
-								<li><a href="#" id='stats' class="fa-solid fa-star"><span class="label">Stats</span></a></li>
-								<li><a href="#" id='conf' class="fa-solid fa-gear"><span class="label">Conf</span></a></li>
-                               </ul>
-						</nav>
-					</header>
-                <!-- Info Account -->
-                    <section>
-                        <div id="infoAccount">
-                            <p>USER:</p>
-                        </div>
-                    </section>
-                 
+		<script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+		<script src="https://cdn.socket.io/4.7.2/socket.io.min.js" integrity="sha384-mZLF4UVrpi/QTWPA7BjNPEnkIfRFn4ZEO3Qt/HFklTJBj/gBOV8G3HcKn4NfQblz" crossorigin="anonymous"></script>
 
-                    <section>
-                     <!-- The Modal -->
-            <div id="myModal" class="modal">
-                     <!-- START Modal content -->
-                        <!-- Modal content -->
-
-                        <!--header del modal ..MOdifico ogni volta quando apro un modal-->
-                <div id="modal-document" class="modal-content">
-                            <div class="modal-header starr">
-                                <span class="close">&times;</span>
-                                <span id='labelLogo' class="fa-solid fa-gear"></span>
-                                <span id="labelPage" class="label"> CONF </span>
-                            </div>
-
-                    <!--        PAGINA CONFIGURAZIONE           -->
-                    <div id='modal-conf-page' class="modal-body hide">
-                        <section class="settings-panel">
-                            <div class="panel-intro">
-                                <span class="fa-solid fa-sliders"></span>
-                                <div>
-                                    <h2>Configurazioni</h2>
-                                    <p>Personalizza l’esperienza di gioco. Le preferenze restano salvate su questo dispositivo.</p>
-                                </div>
-                            </div>
-                            <label class="setting-row" for="setting-audio">
-                                <span><strong>Effetti sonori</strong><small>Suoni per selezioni, errori e combinazioni</small></span>
-                                <input type="checkbox" id="setting-audio" checked>
-                                <i class="setting-switch" aria-hidden="true"></i>
-                            </label>
-                            <label class="setting-row" for="setting-effects">
-                                <span><strong>Animazioni</strong><small>Ingrandimenti, esplosioni e spostamenti delle tessere</small></span>
-                                <input type="checkbox" id="setting-effects" checked>
-                                <i class="setting-switch" aria-hidden="true"></i>
-                            </label>
-                            <div class="settings-status">
-                                <span class="fa-solid fa-circle-check"></span>
-                                <span id="settings-status-text">Preferenze attive</span>
-                            </div>
-                        </section>
-                    </div> 
-
-
-    <!--          PAGINA STATS           -->
-                    <div id='modal-conf-stat' class="modal-body hide">
-                        <section class="leaderboard-panel">
-                            <div class="panel-intro">
-                                <span class="fa-solid fa-trophy"></span>
-                                <div><h2>Classifica</h2><p>Seleziona un gioco e confronta i migliori risultati.</p></div>
-                            </div>
-                            <div id="leaderboardTabs" class="leaderboard-tabs" role="tablist">
-                                <button type="button" data-board="numberBlast">Number Blast <small>0</small></button>
-                                <button type="button" data-board="pairs">Coppie <small>0</small></button>
-                                <button type="button" data-board="sudoku">Sudoku <small>0</small></button>
-                                <button type="button" data-board="escapeMath">Escape Math <small>0</small></button>
-                            </div>
-                            <p id="leaderboardSummary" class="leaderboard-summary"></p>
-                            <ol id="statsListEl" class="leaderboard-list"></ol>
-                        </section>
-                    </div> 
-
-
-    <!--          PAGINA play         -->
-    <div id='modal-conf-game' class="modal-body hide">
-        <h2>Play The Game</h2>
-        <br>
-        <div class="modal-body">
-
-        <div onclick="toggleNumberBlastModes(event)" class="contact game-mode-card" id="numberBlastGameCard">
-            <img class="pic imgPlaygame" src="https://latitanti.altervista.org/BG/img/png.png" ></img>
-            <h2>NUMBER BLAST</h2>
-            <p class="mode-hint">Scegli come giocare</p>
-            <div id="numberBlastModeSelector" class="mode-selector hide">
-                <button type="button" onclick="playStart(1, event)"><span class="fa-solid fa-user"></span> SINGLE PLAYER</button>
-                <button type="button" onclick="playStart1vs1(event)"><span class="fa-solid fa-user-group"></span> 1 VS 1</button>
-                <div id="waitingplayer" class="waiting-mode hide"><span class="fa-solid fa-hourglass-start"></span> <span id="waitingplayerText"></span></div>
-            </div>
-        </div>
-
-        <div onclick="playSudoku()" class="contact">
-            <div class="pic imgPlaygame sudoku-menu-icon">9</div>
-            <h2>SUDOKU</h2>
-        </div>
-
-        <div onclick="toggleEscapeModes(event)" class="contact game-mode-card" id="escapeGameCard">
-            <div class="pic imgPlaygame escape-menu-icon">∑→</div>
-            <h2>ESCAPE MATH</h2>
-            <p class="mode-hint">Scegli come giocare</p>
-            <div id="escapeModeSelector" class="mode-selector hide">
-                <button type="button" onclick="playEscapeMath(event)"><span class="fa-solid fa-user"></span> SINGLE PLAYER</button>
-                <button type="button" onclick="playEscapeMath1vs1(event)"><span class="fa-solid fa-user-group"></span> 1 VS 1</button>
-                <div id="escapeWaitingPlayer" class="waiting-mode hide"><span class="fa-solid fa-hourglass-start"></span> <span id="escapeWaitingText"></span></div>
-            </div>
-        </div>
-
-        <div onclick="togglePairsModes(event)" class="contact game-mode-card" id="pairsGameCard">
-            <div class="pic imgPlaygame pairs-menu-icon">7·7</div>
-            <h2>COPPIE DI NUMERI</h2>
-            <p class="mode-hint">Scegli come giocare</p>
-            <div id="pairsModeSelector" class="mode-selector hide">
-                <button type="button" onclick="playPairs(event)"><span class="fa-solid fa-user"></span> SINGLE PLAYER</button>
-                <button type="button" onclick="playPairs1vs1(event)"><span class="fa-solid fa-user-group"></span> 1 VS 1</button>
-                <div id="pairsWaitingPlayer" class="waiting-mode hide"><span class="fa-solid fa-hourglass-start"></span> <span id="pairsWaitingText"></span></div>
-            </div>
-        </div>
-        <br>
-         </div>
-    </div> 
-
-     <!--          PAGINA PLAYGROUND     .gaming-area -->
-     <div id='modal-playGround' class="modal-body hide">
-        <h2>Giochi Area</h2>
-        <div id="gameInfo">
-            <h2 id="gameLevel"></h2>
-            <div id="gameMission"></div>
-            <span id="gameScore">Punteggio livello: 0</span>
-            &nbsp;&bull;&nbsp;
-            <span id="gameTotalScore">Totale: 0</span>
-            &nbsp;&bull;&nbsp;
-            <span id="gameRemaining"></span>
-            &nbsp;&bull;&nbsp;
-            <span id="gameTimer">TEMPO: 00:00.0</span>
-            &nbsp;&bull;&nbsp;
-            <span id="gameDeadline">LIMITE: --:--.-</span>
-            &nbsp;&bull;&nbsp;
-            <span id="gameCombo">COMBO: ×1</span>
-            &nbsp;&bull;&nbsp;
-            <span id="gameErrors">ERRORI: 0</span>
-            <div id="gameBonusMsg"></div>
-        </div>
-        <div id="buttonAreaH">
-       
-       </div>
-    </div> 
-
-                </div>
-                    <!-- FINE Modal content -->
-            </div> 
-                    </section>
-				<!-- Footer -->
-					<footer id="footer">
-                      
-						<span class="copyright">&copy;ButtoneGame</span>
-					</footer>
-
-			</div>
-		</div>
-
-    <!-- Schermata autonoma, esterna al sistema delle modal -->
-    <section id="adventure-screen" class="adventure-screen hide" aria-label="Mappa Avventura">
-        <div class="adventure-panel">
-            <div class="adventure-header">
-                <button type="button" id="adventureBack" class="adventure-back" aria-label="Torna alla home">
-                    <span class="fa-solid fa-arrow-left"></span><span>HOME</span>
-                </button>
-                <div class="adventure-heading">
-                    <small>CAMPAGNA</small>
-                    <h2>Mappa Avventura</h2>
-                    <p>Completa i nodi, raccogli le stelle e sblocca il mondo successivo.</p>
-                </div>
-                <div class="adventure-total"><span class="fa-solid fa-star"></span><strong id="adventureStars">0/60</strong></div>
-            </div>
-            <div id="adventureMap" class="adventure-map" aria-live="polite">
-                <p class="adventure-loading">Caricamento della mappa…</p>
-            </div>
-        </div>
-    </section>
-	 <script src="https://kit.fontawesome.com/e4ff14a47e.js" crossorigin="anonymous"></script>
-     <%- include('./assets/client-js'); %>    
-        <script>
-		let user;
-            window.onload = function() {
-		    document.body.classList.remove('is-preload');
-		    user= new Page();
-	    }
-                  window.ontouchmove = function(event) { return Boolean(event.target.closest('#adventure-screen')); }
-                  window.onorientationchange = function() { document.body.scrollTop = 0; }
-		
-          </script>  
-          
-          <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" integrity="sha384-mZLF4UVrpi/QTWPA7BjNPEnkIfRFn4ZEO3Qt/HFklTJBj/gBOV8G3HcKn4NfQblz" crossorigin="anonymous"></script>
-		<script>
-			
-            let toggleNumberBlastModes = (event)=>{
-            event.stopPropagation();
-            const selector = document.getElementById('numberBlastModeSelector');
-            const pairsSelector = document.getElementById('pairsModeSelector');
-            const escapeSelector = document.getElementById('escapeModeSelector');
-            pairsSelector.classList.add('hide');
-            escapeSelector.classList.add('hide');
-            document.getElementById('pairsGameCard').classList.remove('expanded');
-            document.getElementById('escapeGameCard').classList.remove('expanded');
-            selector.classList.toggle('hide');
-            document.getElementById('numberBlastGameCard').classList.toggle('expanded', !selector.classList.contains('hide'));
-            }
-
-            let playStart = (liv, event)=>{
-            if(event) event.stopPropagation();
-            user.socket.emit('game start',liv );// il numero di bottoni aumenta automaticamente col livello
-            }
-
-        let playStart1vs1 = (event)=>{
-            if(event) event.stopPropagation();
-            console.log("invio richiesta al server [ 1 versus 1 ] ")
-            user.socket.emit('gameOnline 1vs1','join' );
-            document.getElementById('waitingplayer').classList.remove('hide');
-            document.getElementById('waitingplayerText').innerText=' Invio richiesta al server...';
-            }
-
-        let playSudoku = ()=>{
-            user.socket.emit('sudoku start');
-        }
-
-        let toggleEscapeModes = (event)=>{
-            event.stopPropagation();
-            const selector = document.getElementById('escapeModeSelector');
-            ['numberBlastModeSelector', 'pairsModeSelector'].forEach(id => document.getElementById(id).classList.add('hide'));
-            document.getElementById('numberBlastGameCard').classList.remove('expanded');
-            document.getElementById('pairsGameCard').classList.remove('expanded');
-            selector.classList.toggle('hide');
-            document.getElementById('escapeGameCard').classList.toggle('expanded', !selector.classList.contains('hide'));
-        }
-
-        let playEscapeMath = (event)=>{
-            if(event) event.stopPropagation();
-            user.socket.emit('escape start');
-        }
-
-        let playEscapeMath1vs1 = (event)=>{
-            if(event) event.stopPropagation();
-            user.socket.emit('escapeOnline 1vs1', 'join');
-            document.getElementById('escapeWaitingPlayer').classList.remove('hide');
-            document.getElementById('escapeWaitingText').innerText = 'Ricerca avversario...';
-        }
-
-        let togglePairsModes = (event)=>{
-            event.stopPropagation();
-            const selector = document.getElementById('pairsModeSelector');
-            const numberBlastSelector = document.getElementById('numberBlastModeSelector');
-            const escapeSelector = document.getElementById('escapeModeSelector');
-            numberBlastSelector.classList.add('hide');
-            escapeSelector.classList.add('hide');
-            document.getElementById('numberBlastGameCard').classList.remove('expanded');
-            document.getElementById('escapeGameCard').classList.remove('expanded');
-            selector.classList.toggle('hide');
-            document.getElementById('pairsGameCard').classList.toggle('expanded', !selector.classList.contains('hide'));
-        }
-
-        let playPairs = (event)=>{
-            if(event) event.stopPropagation();
-            user.socket.emit('pairs start');
-        }
-
-        let playPairs1vs1 = (event)=>{
-            if(event) event.stopPropagation();
-            user.socket.emit('pairsOnline 1vs1', 'join');
-            document.getElementById('pairsWaitingPlayer').classList.remove('hide');
-            document.getElementById('pairsWaitingText').innerText = 'Ricerca avversario...';
-        }
-
-        </script>
+		<%- include('./assets/game/sfx'); %>
+		<%- include('./assets/game/socket-service'); %>
+		<%- include('./assets/game/ui-kit'); %>
+		<%- include('./assets/game/game-router'); %>
+		<%- include('./assets/game/scenes/base-scene'); %>
+		<%- include('./assets/game/scenes/boot'); %>
+		<%- include('./assets/game/scenes/home'); %>
+		<%- include('./assets/game/scenes/mode-select'); %>
+		<%- include('./assets/game/scenes/settings'); %>
+		<%- include('./assets/game/scenes/stats'); %>
+		<%- include('./assets/game/scenes/adventure-map'); %>
+		<%- include('./assets/game/scenes/pairs'); %>
+		<%- include('./assets/game/scenes/match3'); %>
+		<%- include('./assets/game/scenes/sudoku'); %>
+		<%- include('./assets/game/scenes/escape-math'); %>
+		<%- include('./assets/game/main'); %>
 	</body>
 </html>

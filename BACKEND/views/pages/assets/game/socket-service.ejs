@@ -1,0 +1,35 @@
+<script>
+
+// Wrapper unico attorno al client Socket.io: stessa auth (token/playerId) e stessi nomi
+// evento già usati dal server in BACKEND/event/{account,game}.js. Nessuna modifica al backend.
+class SocketService {
+    constructor(){
+        this.socket = io({
+            auth: { token: localStorage.getItem('userName'), playerId: SocketService.getPlayerId() },
+        });
+        this.username = null;
+        this.socket.on('setNick', (data) => {
+            this.username = data.msg;
+            localStorage.setItem('userName', data.msg);
+        });
+    }
+
+    static getPlayerId(){
+        let id = localStorage.getItem('buttonGamePlayerId');
+        if(!id){
+            const randomPart = window.crypto && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            id = `player-${randomPart}`;
+            localStorage.setItem('buttonGamePlayerId', id);
+        }
+        return id;
+    }
+
+    emit(event, payload){ this.socket.emit(event, payload); }
+    on(event, callback){ this.socket.on(event, callback); }
+    off(event, callback){ this.socket.off(event, callback); }
+}
+
+const socketService = new SocketService();
+</script>

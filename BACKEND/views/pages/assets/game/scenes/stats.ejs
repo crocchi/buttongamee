@@ -1,0 +1,85 @@
+<script>
+
+// Raggruppamenti/etichette allineati a BACKEND/db/scoreModel.js (GAME_MODE_GROUPS).
+const STATS_TABS = [
+    { key: 'numberBlast', label: 'Number Blast' },
+    { key: 'pairs', label: 'Coppie' },
+    { key: 'sudoku', label: 'Sudoku' },
+    { key: 'escapeMath', label: 'Escape Math' },
+];
+
+const STATS_MODE_LABELS = {
+    pairs: 'Coppie · Single', 'pairs-1vs1': 'Coppie · 1 vs 1',
+    'number-blast-1vs1': 'Number Blast · 1 vs 1', 'campaign-total': 'Number Blast',
+    campain: 'Coppie · Campagna', '1vs1': 'Coppie · 1 vs 1', sudoku: 'Sudoku',
+    'escape-math': 'Escape Math · Single', 'escape-math-1vs1': 'Escape Math · 1 vs 1',
+};
+
+class StatsScene extends BaseModalScene {
+    constructor(){ super('Stats'); }
+
+    create(){
+        this.buildChrome('Classifica', '★');
+        if(this.activeTab === undefined) this.activeTab = 'numberBlast';
+        if(this.groups === undefined) this.groups = null;
+
+        const { x, y, width } = this.contentBounds;
+        const tabGap = 8;
+        const tabWidth = (width - 3 * tabGap) / 4;
+        STATS_TABS.forEach((tab, i) => {
+            const rows = (this.groups && this.groups[tab.key]) || [];
+            new UIButton(this, x + tabWidth / 2 + i * (tabWidth + tabGap), y + 20, tabWidth, 40, `${tab.label} (${rows.length})`, {
+                variant: tab.key === this.activeTab ? 'primary' : 'ghost', fontSize: 11,
+                onClick: () => { this.activeTab = tab.key; this.scene.restart(); },
+            });
+        });
+
+        const listTop = y + 64;
+        if(!this.groups){
+            this.add.text(x, listTop, 'Caricamento classifica…', {
+                fontFamily: THEME.font, fontSize: '15px', color: THEME.textMuted,
+            });
+        } else {
+            const rows = this.groups[this.activeTab] || [];
+            if(rows.length === 0){
+                this.add.text(x, listTop, 'Nessun punteggio registrato. Completa una partita per entrare in classifica!', {
+                    fontFamily: THEME.font, fontSize: '15px', color: THEME.textMuted, wordWrap: { width },
+                });
+            } else {
+                rows.slice(0, 12).forEach((row, i) => this.renderRow(row, i, x, listTop + i * 36, width));
+            }
+        }
+
+        this.onStatsData = (data) => {
+            this.groups = (data && data.groups) || data;
+            this.scene.restart();
+        };
+        socketService.on('statsData', this.onStatsData);
+        this.events.once('shutdown', () => socketService.off('statsData', this.onStatsData));
+
+        if(!this.groups) socketService.emit('stats request');
+    }
+
+    renderRow(row, index, x, y, width){
+        const elapsed = Number(row.elapsed_ms) || 0;
+        const minutes = Math.floor(elapsed / 60000);
+        const seconds = Math.floor((elapsed % 60000) / 1000);
+
+        this.add.text(x, y, `${index + 1}.`, {
+            fontFamily: THEME.font, fontSize: '15px', fontStyle: '700', color: THEME.gold,
+        }).setOrigin(0, 0.5);
+        this.add.text(x + 32, y - 8, row.nickname || 'Giocatore', {
+            fontFamily: THEME.font, fontSize: '15px', color: THEME.text,
+        }).setOrigin(0, 0.5);
+        this.add.text(x + 32, y + 10, STATS_MODE_LABELS[row.mode] || row.mode || 'Gioco', {
+            fontFamily: THEME.font, fontSize: '11px', color: THEME.textMuted,
+        }).setOrigin(0, 0.5);
+        this.add.text(x + width, y - 8, `${Number(row.score) || 0} pt`, {
+            fontFamily: THEME.font, fontSize: '15px', fontStyle: '700', color: THEME.text,
+        }).setOrigin(1, 0.5);
+        this.add.text(x + width, y + 10, `${minutes}:${String(seconds).padStart(2, '0')} · L${Number(row.level) || 1}`, {
+            fontFamily: THEME.font, fontSize: '11px', color: THEME.textMuted,
+        }).setOrigin(1, 0.5);
+    }
+}
+</script>

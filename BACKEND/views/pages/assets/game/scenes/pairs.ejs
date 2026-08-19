@@ -1,0 +1,546 @@
+<script>
+
+const PAIR_TILE_BASE = 120;
+
+// Una tessera numero/bonus della griglia "Coppie di numeri". Disegnata una volta a dimensione
+// fissa (PAIR_TILE_BASE) e poi scalata: evita di ridisegnare la grafica ad ogni resize/relayout.
+class PairTile extends Phaser.GameObjects.Container {
+    constructor(scene, { value, index, color, noColor = false }){
+        super(scene, 0, 0);
+        this.value = value;
+        this.index = index;
+        this.isBonus = value === 'point' || value === 'bomb';
+        this.state = 'idle';
+        this.alwaysVisible = false;
+        this.baseColor = noColor ? 0x45515c : color;
+
+        this.face = scene.add.graphics();
+        this.label = scene.add.text(0, 0, this.isBonus ? (value === 'point' ? '★' : '✹') : String(value), {
+            fontFamily: THEME.font,
+            fontSize: this.isBonus ? '52px' : '44px',
+            fontStyle: '900',
+            color: '#ffffff',
+            stroke: '#00000055',
+            strokeThickness: 4,
+        }).setOrigin(0.5);
+        this.timerBar = scene.add.rectangle(0, PAIR_TILE_BASE / 2 - 10, PAIR_TILE_BASE - 24, 6, 0x4ad991).setVisible(false);
+
+        this.backFace = scene.add.graphics();
+        this.backFace.fillStyle(0x22303a, 1);
+        this.backFace.fillRoundedRect(-PAIR_TILE_BASE / 2, -PAIR_TILE_BASE / 2, PAIR_TILE_BASE, PAIR_TILE_BASE, 18);
+        this.backFace.lineStyle(3, 0x3a4d5a, 1);
+        this.backFace.strokeRoundedRect(-PAIR_TILE_BASE / 2, -PAIR_TILE_BASE / 2, PAIR_TILE_BASE, PAIR_TILE_BASE, 18);
+        this.backFace.setVisible(false);
+
+        this.redraw();
+        this.add([this.face, this.label, this.timerBar, this.backFace]);
+
+        this.setInteractive(
+            new Phaser.Geom.Rectangle(-PAIR_TILE_BASE / 2, -PAIR_TILE_BASE / 2, PAIR_TILE_BASE, PAIR_TILE_BASE),
+            Phaser.Geom.Rectangle.Contains,
+        );
+        this.input.cursor = 'pointer';
+        scene.add.existing(this);
+    }
+
+    redraw(){
+        this.face.clear();
+        let fill = this.baseColor;
+        let borderColor = 0x0b0f13;
+        let borderWidth = 3;
+        if(this.state === 'selected'){ borderColor = 0x3ec6ff; borderWidth = 7; }
+        else if(this.state === 'locked'){ borderColor = 0xff5d55; borderWidth = 7; }
+        else if(this.state === 'wrong'){ fill = 0xff5d55; }
+        else if(this.state === 'level-locked'){ fill = 0x2a333a; }
+
+        this.face.fillStyle(fill, 1);
+        this.face.fillRoundedRect(-PAIR_TILE_BASE / 2, -PAIR_TILE_BASE / 2, PAIR_TILE_BASE, PAIR_TILE_BASE, 18);
+        this.face.lineStyle(borderWidth, borderColor, 1);
+        this.face.strokeRoundedRect(-PAIR_TILE_BASE / 2, -PAIR_TILE_BASE / 2, PAIR_TILE_BASE, PAIR_TILE_BASE, 18);
+    }
+
+    setState(state){
+        this.state = state;
+        this.redraw();
+    }
+
+    setConcealed(hidden){
+        this.backFace.setVisible(hidden);
+        this.face.setVisible(!hidden);
+        this.label.setVisible(!hidden);
+    }
+
+    setDisabledLook(disabled){
+        this.setState(disabled ? 'level-locked' : 'idle');
+    }
+
+    startSelectionTimer(expiresInMs){
+        this.timerBar.setVisible(true);
+        this.timerBar.setScale(1, 1);
+        this.timerBar.fillColor = 0x4ad991;
+        this.scene.tweens.killTweensOf(this.timerBar);
+        this.scene.tweens.add({
+            targets: this.timerBar, scaleX: 0, duration: expiresInMs, ease: 'Linear',
+            onUpdate: (tween) => {
+                const t = tween.progress;
+                this.timerBar.fillColor = t < 0.65 ? 0x4ad991 : (t < 0.9 ? 0xffcf5c : 0xff5d55);
+            },
+        });
+    }
+
+    clearSelectionTimer(){
+        this.scene.tweens.killTweensOf(this.timerBar);
+        this.timerBar.setVisible(false);
+    }
+
+    shakeWrong(){
+        if(!GameSettings.effectsEnabled) return;
+        const originX = this.x;
+        this.scene.tweens.add({
+            targets: this, x: originX - 6, duration: 55, yoyo: true, repeat: 3,
+            onComplete: () => this.setPosition(originX, this.y),
+        });
+    }
+
+    pop(){
+        if(!GameSettings.effectsEnabled){ this.destroy(); return; }
+        this.scene.tweens.add({
+            targets: this, scale: 0, alpha: 0, duration: 260, ease: 'Back.easeIn',
+            onComplete: () => this.destroy(),
+        });
+    }
+}
+
+// Copre 'pairs' (single, non più raggiungibile dal menu ma il server la supporta ancora),
+// 'campain' (campagna a mondi/livelli) e 'pairs-1vs1' (tabellone condiviso da 200 tessere).
+class PairsScene extends Phaser.Scene {
+    constructor(){ super('Pairs'); }
+
+    init(data){
+        this.initialPayload = data && data.payload;
+        this.tiles = new Map();
+        this.puzzle = [];
+        this.matched = new Set();
+        this.locked = new Set();
+        this.mode = null;
+        this.config = null;
+        this.liv = 1;
+        this.score = 0;
+        this.totalScore = 0;
+        this.errors = 0;
+        this.combo = 0;
+        this.remainingPairs = 0;
+        this.my1v1Score = 0;
+        this.opp1v1Score = 0;
+        this.startTime = Date.now();
+        this.levelStartTime = Date.now();
+        this.ended = false;
+        this.adventureNode = null;
+    }
+
+    create(){
+        const { width, height } = this.scale;
+        const bg = this.add.graphics();
+        bg.fillGradientStyle(THEME.bgTop, THEME.bgTop, THEME.bgBottom, THEME.bgBottom, 1);
+        bg.fillRect(0, 0, width, height);
+
+        this.hud = new HUDBar(this, { onBack: () => this.exitToMenu() });
+        const top = this.hud.height + 20;
+        this.boardArea = { x: 30, y: top, width: width - 60, height: height - top - 24 };
+
+        this.onGameSet = (payload) => this.handleGameSet(payload);
+        this.onButtonSelected = (payload) => this.handleButtonSelected(payload);
+        this.onPairMatched = (payload) => this.handlePairMatched(payload);
+        this.onPairMismatch = (payload) => this.handlePairMismatch(payload);
+        this.onSelectionExpired = (payload) => this.handleSelectionExpired(payload);
+        this.onSelectionLimit = ({ max }) => this.hud.showBonus(`Puoi aprire al massimo ${max} tessere insieme`);
+        this.onUnlockButtons = (payload) => this.handleUnlockButtons(payload);
+        this.onCampaignLost = (payload) => this.handleCampaignLost(payload);
+        this.onGameOverAck = (payload) => this.handleGameOverAck(payload);
+        this.onGameResult = (payload) => this.handleGameResult(payload);
+        this.onPairsComplete = (payload) => this.handlePairsComplete(payload);
+
+        socketService.on('gameSet', this.onGameSet);
+        socketService.on('buttonSelected', this.onButtonSelected);
+        socketService.on('pairMatched', this.onPairMatched);
+        socketService.on('pairMismatch', this.onPairMismatch);
+        socketService.on('selectionExpired', this.onSelectionExpired);
+        socketService.on('selectionLimit', this.onSelectionLimit);
+        socketService.on('unlockButtons', this.onUnlockButtons);
+        socketService.on('campaignLost', this.onCampaignLost);
+        socketService.on('gameOverAck', this.onGameOverAck);
+        socketService.on('gameResult', this.onGameResult);
+        socketService.on('pairsComplete', this.onPairsComplete);
+        this.onAdventureNodeComplete = (payload) => this.handleAdventureComplete(payload);
+        this.onAdventureNodeFailed = (payload) => this.handleAdventureFailed(payload);
+        socketService.on('adventureNodeComplete', this.onAdventureNodeComplete);
+        socketService.on('adventureNodeFailed', this.onAdventureNodeFailed);
+
+        this.events.once('shutdown', () => {
+            socketService.off('gameSet', this.onGameSet);
+            socketService.off('buttonSelected', this.onButtonSelected);
+            socketService.off('pairMatched', this.onPairMatched);
+            socketService.off('pairMismatch', this.onPairMismatch);
+            socketService.off('selectionExpired', this.onSelectionExpired);
+            socketService.off('selectionLimit', this.onSelectionLimit);
+            socketService.off('unlockButtons', this.onUnlockButtons);
+            socketService.off('campaignLost', this.onCampaignLost);
+            socketService.off('gameOverAck', this.onGameOverAck);
+            socketService.off('gameResult', this.onGameResult);
+            socketService.off('pairsComplete', this.onPairsComplete);
+            socketService.off('adventureNodeComplete', this.onAdventureNodeComplete);
+            socketService.off('adventureNodeFailed', this.onAdventureNodeFailed);
+            if(this.timerEvent) this.timerEvent.remove();
+        });
+
+        this.timerEvent = this.time.addEvent({ delay: 100, loop: true, callback: () => this.renderTimer() });
+
+        if(this.initialPayload) this.applyGameSet(this.initialPayload);
+    }
+
+    exitToMenu(){
+        this.scene.stop(this.scene.key);
+        this.scene.start('Home');
+        const target = this.adventureNode ? 'AdventureMap' : 'ModeSelect';
+        this.scene.launch(target);
+        this.scene.bringToTop(target);
+    }
+
+    handleAdventureComplete(payload){
+        if(!this.adventureNode || payload.nodeId !== this.adventureNode.id || this.ended) return;
+        this.ended = true;
+        if(this.timerEvent) this.timerEvent.remove();
+        showAdventureComplete(this, payload, () => this.exitToMenu());
+    }
+
+    handleAdventureFailed({ nodeId, reason }){
+        if(!this.adventureNode || nodeId !== this.adventureNode.id || this.ended) return;
+        this.ended = true;
+        if(this.timerEvent) this.timerEvent.remove();
+        showAdventureFailed(this, reason, () => this.exitToMenu());
+    }
+
+    // ---- payload dal server (BACKEND/event/game.js) ----
+
+    handleGameSet(payload){
+        if(!payload || !['campain', 'pairs', 'pairs-1vs1'].includes(payload.mode)) return;
+        this.applyGameSet(payload);
+    }
+
+    applyGameSet(payload){
+        const { mode, puzzle, liv = 1, elapsedMs = 0, config = null, lockedIndices = [], levelComplete = null, adventureNode = null } = payload;
+        this.mode = mode;
+        this.puzzle = puzzle;
+        this.config = config;
+        this.liv = liv;
+        this.adventureNode = adventureNode;
+        this.matched = new Set();
+        this.errors = 0;
+        this.combo = 0;
+        this.locked = new Set(lockedIndices);
+        this.my1v1Score = 0;
+        this.opp1v1Score = 0;
+        this.remainingPairs = (mode === 'campain' && config && config.matchRule === 'equal')
+            ? new Set(puzzle.map(String)).size
+            : Math.floor(puzzle.length / 2);
+
+        if(levelComplete){
+            this.totalScore = levelComplete.totalScore;
+            sfx.levelUp();
+            this.hud.showBonus(`LIVELLO ${levelComplete.previousLiv} completato! +${levelComplete.score} punti`);
+        } else {
+            this.totalScore = 0;
+        }
+        this.score = 0;
+        this.startTime = Date.now() - elapsedMs;
+        this.levelStartTime = Date.now();
+
+        this.buildBoard(config);
+        this.updateHudTitle();
+        this.updateStats();
+    }
+
+    buildBoard(config){
+        this.tiles.forEach((tile) => tile.destroy());
+        this.tiles.clear();
+
+        this.puzzle.forEach((value, index) => {
+            const color = this.isBonusValue(value)
+                ? 0xffffff
+                : Phaser.Display.Color.HSLToColor(((Number(value) * 47) % 360) / 360, 0.65, 0.45).color;
+            const tile = new PairTile(this, { value, index, color, noColor: !!(config && config.noColor) });
+            tile.on('pointerup', () => this.onTileClick(index));
+            if(config && index < (config.exposedCount || 0)) tile.alwaysVisible = true;
+            if(this.locked.has(index)) tile.setDisabledLook(true);
+            this.tiles.set(index, tile);
+        });
+
+        this.relayout(false);
+
+        if(config && config.hidden){
+            this.time.delayedCall(config.previewMs, () => {
+                this.tiles.forEach((tile) => { if(!tile.alwaysVisible) tile.setConcealed(true); });
+            });
+        }
+    }
+
+    isBonusValue(value){ return value === 'point' || value === 'bomb'; }
+
+    relayout(animate = true){
+        const activeIndices = this.puzzle.map((_, i) => i).filter((i) => !this.matched.has(i));
+        const layout = computeGridLayout(activeIndices.length, this.boardArea.width, this.boardArea.height);
+        activeIndices.forEach((puzzleIndex, pos) => {
+            const tile = this.tiles.get(puzzleIndex);
+            if(!tile) return;
+            const col = pos % layout.cols;
+            const row = Math.floor(pos / layout.cols);
+            const x = this.boardArea.x + layout.originX + col * (layout.cellSize + layout.gap) + layout.cellSize / 2;
+            const y = this.boardArea.y + layout.originY + row * (layout.cellSize + layout.gap) + layout.cellSize / 2;
+            const scale = layout.cellSize / PAIR_TILE_BASE;
+            if(animate && GameSettings.effectsEnabled){
+                this.tweens.add({ targets: tile, x, y, scaleX: scale, scaleY: scale, duration: 320, ease: 'Sine.easeInOut' });
+            } else {
+                tile.setPosition(x, y);
+                tile.setScale(scale);
+            }
+        });
+    }
+
+    onTileClick(index){
+        if(this.matched.has(index) || this.locked.has(index)) return;
+        socketService.emit('game click', { index });
+    }
+
+    handleButtonSelected({ index, by, expiresInMs = 0 }){
+        const tile = this.tiles.get(index);
+        if(!tile) return;
+        const mine = by === socketService.socket.id;
+        tile.setConcealed(false);
+        tile.setState(mine ? 'selected' : 'locked');
+        if(expiresInMs) tile.startSelectionTimer(expiresInMs);
+    }
+
+    handlePairMatched({ indices, extraIndices = [], by, bonus, points, combo = 0, multiplier = 1, removedGroups }){
+        sfx.match();
+        if(bonus === 'point') sfx.point();
+        if(bonus === 'bomb') sfx.bomb();
+
+        const all = [...indices, ...extraIndices];
+        all.forEach((index) => {
+            this.matched.add(index);
+            const tile = this.tiles.get(index);
+            if(tile){ tile.clearSelectionTimer(); tile.pop(); this.tiles.delete(index); }
+        });
+        this.relayout(true);
+
+        if(bonus === 'point') this.hud.showBonus('Atom the Point: +50 punti extra!');
+        if(bonus === 'bomb') this.hud.showBonus("Atom the Bomb: distrutta un'altra coppia!");
+        if(indices.length === 3) this.hud.showBonus(`TRIS! +${points} punti`);
+
+        if(this.mode === 'pairs-1vs1'){
+            if(by === socketService.socket.id) this.my1v1Score += points; else this.opp1v1Score += points;
+            this.remainingPairs -= (indices.length + extraIndices.length) / 2;
+        } else {
+            this.score += points;
+            this.remainingPairs -= removedGroups || 1;
+            this.combo = combo;
+            if(multiplier > 1) this.hud.showBonus(`COMBO ×${multiplier}: +${points} punti!`);
+        }
+        this.updateStats();
+    }
+
+    handlePairMismatch({ indices, penaltyMs = 0, errors, shuffle = false }){
+        sfx.wrong();
+        shakeCamera(this);
+        if(this.mode !== 'pairs-1vs1'){
+            this.combo = 0;
+            this.errors = errors || this.errors + 1;
+            if(penaltyMs){
+                this.startTime -= penaltyMs;
+                this.levelStartTime -= penaltyMs;
+                this.hud.showBonus(`Errore: +${penaltyMs / 1000} secondi`);
+            }
+            this.updateStats();
+        }
+        indices.forEach((index) => {
+            const tile = this.tiles.get(index);
+            if(!tile) return;
+            tile.clearSelectionTimer();
+            tile.setConcealed(false);
+            tile.shakeWrong();
+            this.time.delayedCall(400, () => {
+                if(!tile.active) return;
+                tile.setState('idle');
+                if(this.config && this.config.hidden && !tile.alwaysVisible) tile.setConcealed(true);
+            });
+        });
+        if(shuffle) this.time.delayedCall(450, () => this.shuffleBoard());
+    }
+
+    handleSelectionExpired({ index, penaltyMs = 0, errors, shuffle = false }){
+        const tile = this.tiles.get(index);
+        if(!tile) return;
+        sfx.wrong();
+        shakeCamera(this);
+        this.combo = 0;
+        this.errors = errors || this.errors + 1;
+        if(penaltyMs){
+            this.startTime -= penaltyMs;
+            this.levelStartTime -= penaltyMs;
+            this.hud.showBonus(`Tempo tessera scaduto: +${penaltyMs / 1000} secondi`);
+        }
+        this.updateStats();
+        tile.clearSelectionTimer();
+        tile.setState('wrong');
+        this.time.delayedCall(280, () => {
+            if(!tile.active) return;
+            tile.setState('idle');
+            if(this.config && this.config.hidden && !tile.alwaysVisible) tile.setConcealed(true);
+        });
+        if(shuffle) this.time.delayedCall(300, () => this.shuffleBoard());
+    }
+
+    handleUnlockButtons({ indices }){
+        indices.forEach((index) => {
+            this.locked.delete(index);
+            const tile = this.tiles.get(index);
+            if(!tile) return;
+            tile.setDisabledLook(false);
+            if(this.config && this.config.hidden && !tile.alwaysVisible) tile.setConcealed(true);
+        });
+        this.hud.showBonus('Caselle sbloccate!');
+    }
+
+    shuffleBoard(){
+        const activeIndices = this.puzzle.map((_, i) => i).filter((i) => !this.matched.has(i));
+        for(let i = activeIndices.length - 1; i > 0; i--){
+            const j = Math.floor(Math.random() * (i + 1));
+            [activeIndices[i], activeIndices[j]] = [activeIndices[j], activeIndices[i]];
+        }
+        const layout = computeGridLayout(activeIndices.length, this.boardArea.width, this.boardArea.height);
+        activeIndices.forEach((puzzleIndex, pos) => {
+            const tile = this.tiles.get(puzzleIndex);
+            if(!tile) return;
+            const col = pos % layout.cols;
+            const row = Math.floor(pos / layout.cols);
+            const x = this.boardArea.x + layout.originX + col * (layout.cellSize + layout.gap) + layout.cellSize / 2;
+            const y = this.boardArea.y + layout.originY + row * (layout.cellSize + layout.gap) + layout.cellSize / 2;
+            this.tweens.add({ targets: tile, x, y, duration: 320, ease: 'Sine.easeInOut' });
+        });
+    }
+
+    // ---- fine partita ----
+
+    handleCampaignLost({ score, elapsedMs, liv, reason }){
+        if(this.ended) return;
+        this.ended = true;
+        this.showEnd(
+            reason === 'moves' ? 'Mosse terminate' : 'Tempo scaduto',
+            [`Livello raggiunto: ${liv}`, `Punteggio totale: ${score}`, this.formatElapsed(elapsedMs)],
+            true,
+        );
+    }
+
+    handleGameOverAck({ score, elapsedMs, liv }){
+        if(this.ended) return;
+        this.ended = true;
+        this.showEnd(
+            'Campagna completata!',
+            [`Hai completato tutti i livelli (fino al ${liv})`, `Punteggio totale: ${score}`, this.formatElapsed(elapsedMs)],
+            true,
+        );
+    }
+
+    handleGameResult({ result, reason, score, opponentScore, elapsedMs }){
+        if(this.mode !== 'pairs-1vs1' || this.ended) return;
+        this.ended = true;
+        const title = result === 'win' ? 'Hai vinto!' : (result === 'draw' ? 'Pareggio!' : 'Hai perso');
+        const lines = [`Tu: ${score} · Avversario: ${opponentScore}`, this.formatElapsed(elapsedMs)];
+        if(reason === 'opponent-disconnected') lines.push("L'avversario si è disconnesso");
+        this.showEnd(title, lines, result === 'lose');
+    }
+
+    handlePairsComplete({ score, elapsedMs, errors }){
+        if(this.ended) return;
+        this.ended = true;
+        this.showEnd('Tutte le coppie trovate!', [`Punteggio: ${score} · Errori: ${errors}`, this.formatElapsed(elapsedMs)], true);
+    }
+
+    showEnd(title, lines, showNicknamePrompt){
+        if(this.timerEvent) this.timerEvent.remove();
+        showGameEndOverlay(this, { title, lines, showNicknamePrompt, onExit: () => this.exitToMenu() });
+    }
+
+    formatElapsed(elapsedMs){
+        const minutes = Math.floor(elapsedMs / 60000);
+        const seconds = Math.floor((elapsedMs % 60000) / 1000);
+        return `Tempo: ${minutes}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    // ---- HUD ----
+
+    updateHudTitle(){
+        if(this.adventureNode){
+            this.hud.setLevel(`MAPPA #${this.adventureNode.id} · ${this.adventureNode.title}`);
+            this.hud.setMission(this.buildMission());
+            return;
+        }
+        if(this.mode === 'pairs'){
+            this.hud.setLevel('COPPIE DI NUMERI · SINGLE PLAYER');
+        } else if(this.mode === 'pairs-1vs1'){
+            this.hud.setLevel('COPPIE DI NUMERI · 1 VS 1');
+        } else {
+            const world = this.config ? this.config.world : 1;
+            const boss = this.config && this.config.boss ? ' · BOSS' : '';
+            this.hud.setLevel(`COPPIE DI NUMERI · MONDO ${world} · LIVELLO ${this.liv}/100${boss}`);
+        }
+        this.hud.setMission(this.buildMission());
+    }
+
+    buildMission(){
+        if(this.mode === 'pairs') return 'Trova tutte le coppie uguali nel minor tempo possibile';
+        if(this.mode === 'pairs-1vs1') return '100 coppie condivise: trova più abbinamenti e totalizza più punti del tuo avversario';
+        const config = this.config || {};
+        const rules = [config.matchRule === 'sum10' ? 'Abbina numeri con somma 10' : 'Trova coppie o tris di numeri uguali'];
+        if(config.selectionMs) rules.push(`fino a ${config.maxSelections || 4} tessere aperte per ${(config.selectionMs / 1000).toFixed(2)}s`);
+        if(config.hidden) rules.push(`memorizza in ${(config.previewMs / 1000).toFixed(1)}s`);
+        if(config.exposedCount) rules.push(`${config.exposedCount} tessere restano scoperte`);
+        if(config.targetMs) rules.push(`tempo massimo ${Math.round(config.targetMs / 1000)}s`);
+        if(config.penaltyMs) rules.push(`errore +${config.penaltyMs / 1000}s`);
+        if(config.combo) rules.push('combo attiva');
+        if(config.lockedCount) rules.push('2 caselle si aprono dopo 2 coppie');
+        if(config.shuffleOnMismatch) rules.push('errore mescola la griglia');
+        return rules.join(' · ');
+    }
+
+    updateStats(){
+        if(this.mode === 'pairs-1vs1'){
+            this.hud.setStats(`TU: ${this.my1v1Score} · AVVERSARIO: ${this.opp1v1Score} · COPPIE RIMASTE: ${this.remainingPairs}`);
+        } else if(this.mode === 'pairs'){
+            this.hud.setStats(`PUNTEGGIO: ${this.score} · COPPIE RIMASTE: ${this.remainingPairs} · ERRORI: ${this.errors}`);
+        } else {
+            const comboText = this.config && this.config.combo ? `COMBO: ×${Math.max(1, Math.min(this.combo, 5))}` : 'COMBO: —';
+            this.hud.setStats(`LIVELLO: ${this.score} · TOTALE: ${this.totalScore + this.score} · GRUPPI RIMASTI: ${Math.max(0, this.remainingPairs)} · ERRORI: ${this.errors} · ${comboText}`);
+        }
+    }
+
+    renderTimer(){
+        const elapsedMs = Math.max(0, Date.now() - this.startTime);
+        const minutes = Math.floor(elapsedMs / 60000);
+        const seconds = Math.floor((elapsedMs % 60000) / 1000);
+        const tenths = Math.floor((elapsedMs % 1000) / 100);
+        const level = elapsedMs >= 120000 ? 'danger' : (elapsedMs >= 60000 ? 'warning' : 'normal');
+        this.hud.setTimer(`TEMPO: ${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${tenths}`, level);
+
+        if(this.mode === 'campain' && this.config && this.config.targetMs){
+            const remainingMs = Math.max(0, this.config.targetMs - (Date.now() - this.levelStartTime));
+            const rMinutes = Math.floor(remainingMs / 60000);
+            const rSeconds = Math.floor((remainingMs % 60000) / 1000);
+            const rTenths = Math.floor((remainingMs % 1000) / 100);
+            this.hud.setDeadline(`LIMITE: ${String(rMinutes).padStart(2, '0')}:${String(rSeconds).padStart(2, '0')}.${rTenths}`, remainingMs <= 10000);
+        } else {
+            this.hud.setDeadline('');
+        }
+    }
+}
+</script>

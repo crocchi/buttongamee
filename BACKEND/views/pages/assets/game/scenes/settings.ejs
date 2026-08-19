@@ -1,0 +1,61 @@
+<script>
+
+// Stato condiviso letto anche dalle future scene di gioco (milestone 3+) per sapere se
+// disegnare le animazioni "juice" (pop, combo, ecc). Persistito con la stessa chiave
+// localStorage già usata dal client precedente.
+const GameSettings = {
+    effectsEnabled: localStorage.getItem('buttonGameEffects') !== 'off',
+};
+
+class SettingsScene extends BaseModalScene {
+    constructor(){ super('Settings'); }
+
+    create(){
+        this.buildChrome('Impostazioni', '⚙');
+        const { x, y, width } = this.contentBounds;
+
+        this.add.text(x, y, 'Personalizza l\'esperienza di gioco. Le preferenze restano salvate su questo dispositivo.', {
+            fontFamily: THEME.font, fontSize: '14px', color: THEME.textMuted,
+            wordWrap: { width },
+        });
+
+        const rowY1 = y + 64;
+        this.add.text(x, rowY1 - 12, 'Effetti sonori', {
+            fontFamily: THEME.font, fontSize: '18px', fontStyle: '700', color: THEME.text,
+        }).setOrigin(0, 0.5);
+        this.add.text(x, rowY1 + 12, 'Suoni per selezioni, errori e combinazioni', {
+            fontFamily: THEME.font, fontSize: '13px', color: THEME.textMuted,
+        }).setOrigin(0, 0.5);
+        new UIToggle(this, x + width - 26, rowY1, sfx.enabled, (value) => {
+            sfx.enabled = value;
+            localStorage.setItem('buttonGameAudio', value ? 'on' : 'off');
+            this.refreshStatus();
+            if(value) sfx.match();
+        });
+
+        const rowY2 = rowY1 + 64;
+        this.add.text(x, rowY2 - 12, 'Animazioni', {
+            fontFamily: THEME.font, fontSize: '18px', fontStyle: '700', color: THEME.text,
+        }).setOrigin(0, 0.5);
+        this.add.text(x, rowY2 + 12, 'Ingrandimenti, esplosioni e spostamenti delle tessere', {
+            fontFamily: THEME.font, fontSize: '13px', color: THEME.textMuted,
+        }).setOrigin(0, 0.5);
+        new UIToggle(this, x + width - 26, rowY2, GameSettings.effectsEnabled, (value) => {
+            GameSettings.effectsEnabled = value;
+            localStorage.setItem('buttonGameEffects', value ? 'on' : 'off');
+            this.refreshStatus();
+        });
+
+        this.statusText = this.add.text(x, rowY2 + 56, '', {
+            fontFamily: THEME.font, fontSize: '14px', color: THEME.gold,
+        });
+        this.refreshStatus();
+    }
+
+    refreshStatus(){
+        this.statusText.setText(
+            `Audio ${sfx.enabled ? 'attivo' : 'disattivato'} · Animazioni ${GameSettings.effectsEnabled ? 'attive' : 'disattivate'}`,
+        );
+    }
+}
+</script>

@@ -1,0 +1,97 @@
+<script>
+
+// Stessi eventi socket già usati dal vecchio client (BACKEND/event/game.js): nessuna modifica
+// al server. L'apertura della scena di gioco è gestita da game-router.ejs; qui resta solo
+// l'indicatore testuale "in attesa di un avversario" per le modalità 1vs1 in coda.
+const MODE_CARDS = [
+    {
+        key: 'numberBlast', title: 'NUMBER BLAST', icon: '🔢', expandable: true,
+        single: () => socketService.emit('game start', 1),
+        versus: () => socketService.emit('gameOnline 1vs1', 'join'),
+    },
+    {
+        key: 'sudoku', title: 'SUDOKU', icon: '9', expandable: false,
+        onClick: () => socketService.emit('sudoku start'),
+    },
+    {
+        key: 'escapeMath', title: 'ESCAPE MATH', icon: '∑→', expandable: true,
+        single: () => socketService.emit('escape start'),
+        versus: () => socketService.emit('escapeOnline 1vs1', 'join'),
+    },
+    {
+        key: 'pairs', title: 'COPPIE DI NUMERI', icon: '7·7', expandable: true,
+        single: () => socketService.emit('pairs start'),
+        versus: () => socketService.emit('pairsOnline 1vs1', 'join'),
+    },
+];
+
+const MODE_WAIT_TEXTS = {
+    '1vs1-wait': true, 'pairs-1vs1-wait': true, 'escape-math-1vs1-wait': true,
+};
+
+class ModeSelectScene extends BaseModalScene {
+    constructor(){ super('ModeSelect'); }
+
+    create(){
+        this.buildChrome('Gioca', '▶');
+        if(this.expandedKey === undefined) this.expandedKey = null;
+        if(this.feedbackText === undefined) this.feedbackText = '';
+
+        const { x, width } = this.contentBounds;
+        const rowHeight = 56;
+        const gap = 12;
+        let y = this.contentTop + 4;
+
+        MODE_CARDS.forEach((card) => {
+            y = this.renderCard(card, x, y, width, rowHeight);
+            y += gap;
+        });
+
+        if(this.feedbackText){
+            this.add.text(x, y + 4, this.feedbackText, {
+                fontFamily: THEME.font, fontSize: '14px', color: THEME.gold,
+                wordWrap: { width },
+            });
+        }
+
+        this.onGameSet = (payload) => this.onServerFeedback(payload && payload.mode, payload && payload.data);
+        socketService.on('gameSet', this.onGameSet);
+        this.events.once('shutdown', () => socketService.off('gameSet', this.onGameSet));
+    }
+
+    renderCard(card, x, y, width, rowHeight){
+        new UIButton(this, x + width / 2, y + rowHeight / 2, width, rowHeight, card.title, {
+            icon: card.icon, variant: 'ghost', fontSize: 17,
+            onClick: () => {
+                if(!card.expandable){ card.onClick(); return; }
+                this.expandedKey = this.expandedKey === card.key ? null : card.key;
+                this.scene.restart();
+            },
+        });
+
+        let usedHeight = rowHeight;
+        if(card.expandable && this.expandedKey === card.key){
+            const subY = y + rowHeight + 10;
+            const subGap = 12;
+            const subWidth = (width - subGap) / 2;
+            new UIButton(this, x + subWidth / 2, subY + 20, subWidth, 40, 'Single Player', {
+                icon: '👤', variant: 'primary', fontSize: 13,
+                onClick: card.single,
+            });
+            new UIButton(this, x + subWidth + subGap + subWidth / 2, subY + 20, subWidth, 40, '1 vs 1', {
+                icon: '👥', variant: 'success', fontSize: 13,
+                onClick: card.versus,
+            });
+            usedHeight += 10 + 40;
+        }
+        return y + usedHeight;
+    }
+
+    onServerFeedback(mode, waitData){
+        if(mode && MODE_WAIT_TEXTS[mode]){
+            this.feedbackText = waitData || 'In attesa di un avversario...';
+            this.scene.restart();
+        }
+    }
+}
+</script>

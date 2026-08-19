@@ -1,0 +1,430 @@
+<script>
+
+const MATCH3_TILE_BASE = 120;
+const MATCH3_TILE_COLORS = {
+    1: [0xff7676, 0xc52c3c],
+    2: [0xffbd59, 0xd57800],
+    3: [0xffe867, 0xb7a000],
+    4: [0x6ddc88, 0x16823b],
+    5: [0x61bfff, 0x1769a8],
+    6: [0xc184ff, 0x7134ac],
+};
+const MATCH3_SPECIAL_BADGE = { row: '↔', col: '↕', bomb: '✦' };
+
+// Tessera del tabellone Number Blast: colore a gradiente per valore (1-6), badge per le
+// tessere speciali (riga/colonna/bomba) generate dai match da 4+ in BACKEND/game/match3Engine.js.
+class Match3Tile extends Phaser.GameObjects.Container {
+    constructor(scene, { value, special = null }){
+        super(scene, 0, 0);
+        this.value = value;
+        this.special = special;
+        const [top, bottom] = MATCH3_TILE_COLORS[value] || [0x888888, 0x555555];
+        this.mainColor = top;
+
+        this.face = scene.add.graphics();
+        this.face.fillGradientStyle(top, top, bottom, bottom, 1);
+        this.face.fillRoundedRect(-MATCH3_TILE_BASE / 2, -MATCH3_TILE_BASE / 2, MATCH3_TILE_BASE, MATCH3_TILE_BASE, 16);
+        this.face.lineStyle(3, 0x0b0f13, 0.6);
+        this.face.strokeRoundedRect(-MATCH3_TILE_BASE / 2, -MATCH3_TILE_BASE / 2, MATCH3_TILE_BASE, MATCH3_TILE_BASE, 16);
+
+        this.label = scene.add.text(0, 0, String(value), {
+            fontFamily: THEME.font, fontSize: '42px', fontStyle: '900',
+            color: '#ffffff', stroke: '#00000055', strokeThickness: 4,
+        }).setOrigin(0.5);
+        this.add([this.face, this.label]);
+
+        if(special){
+            const badge = scene.add.text(MATCH3_TILE_BASE / 2 - 20, -MATCH3_TILE_BASE / 2 + 18, MATCH3_SPECIAL_BADGE[special] || '', {
+                fontFamily: THEME.font, fontSize: '22px', fontStyle: '900', color: '#ffffff',
+            }).setOrigin(0.5);
+            this.add(badge);
+        }
+
+        this.setInteractive(
+            new Phaser.Geom.Rectangle(-MATCH3_TILE_BASE / 2, -MATCH3_TILE_BASE / 2, MATCH3_TILE_BASE, MATCH3_TILE_BASE),
+            Phaser.Geom.Rectangle.Contains,
+        );
+        this.input.cursor = 'pointer';
+        scene.add.existing(this);
+    }
+}
+
+// Copre 'match3' (campagna Number Blast a 10 livelli) e 'match3-1vs1' (tabellone condiviso).
+class Match3Scene extends Phaser.Scene {
+    constructor(){ super('Match3'); }
+
+    init(data){
+        this.initialPayload = data && data.payload;
+        this.tiles = [];
+        this.mode = null;
+        this.definition = null;
+        this.liv = 1;
+        this.score = 0;
+        this.totalScore = 0;
+        this.movesLeft = 0;
+        this.selected = null;
+        this.busy = false;
+        this.pendingMove = null;
+        this.startTime = Date.now();
+        this.ended = false;
+        this.adventureNode = null;
+        this.boardArea = { x: 0, y: 0, width: 100, height: 100 };
+    }
+
+    create(){
+        const { width, height } = this.scale;
+        const bg = this.add.graphics();
+        bg.fillGradientStyle(THEME.bgTop, THEME.bgTop, THEME.bgBottom, THEME.bgBottom, 1);
+        bg.fillRect(0, 0, width, height);
+
+        this.hud = new HUDBar(this, { onBack: () => this.exitToMenu() });
+        const top = this.hud.height + 20;
+        this.boardArea = { x: 30, y: top, width: width - 60, height: height - top - 24 };
+
+        this.onGameSet = (payload) => this.handleGameSet(payload);
+        this.onMatch3State = (payload) => this.handleMatch3State(payload);
+        this.onMatch3Invalid = () => this.handleMatch3Invalid();
+        this.onCampaignLost = (payload) => this.handleCampaignLost(payload);
+        this.onGameOverAck = (payload) => this.handleGameOverAck(payload);
+        this.onGameResult = (payload) => this.handleGameResult(payload);
+
+        socketService.on('gameSet', this.onGameSet);
+        socketService.on('match3State', this.onMatch3State);
+        socketService.on('match3Invalid', this.onMatch3Invalid);
+        socketService.on('campaignLost', this.onCampaignLost);
+        socketService.on('gameOverAck', this.onGameOverAck);
+        socketService.on('gameResult', this.onGameResult);
+        this.onAdventureNodeComplete = (payload) => this.handleAdventureComplete(payload);
+        this.onAdventureNodeFailed = (payload) => this.handleAdventureFailed(payload);
+        socketService.on('adventureNodeComplete', this.onAdventureNodeComplete);
+        socketService.on('adventureNodeFailed', this.onAdventureNodeFailed);
+
+        this.events.once('shutdown', () => {
+            socketService.off('gameSet', this.onGameSet);
+            socketService.off('match3State', this.onMatch3State);
+            socketService.off('match3Invalid', this.onMatch3Invalid);
+            socketService.off('campaignLost', this.onCampaignLost);
+            socketService.off('gameOverAck', this.onGameOverAck);
+            socketService.off('gameResult', this.onGameResult);
+            socketService.off('adventureNodeComplete', this.onAdventureNodeComplete);
+            socketService.off('adventureNodeFailed', this.onAdventureNodeFailed);
+            if(this.timerEvent) this.timerEvent.remove();
+        });
+
+        this.timerEvent = this.time.addEvent({ delay: 100, loop: true, callback: () => this.renderTimer() });
+
+        if(this.initialPayload) this.applyGameSet(this.initialPayload);
+    }
+
+    exitToMenu(){
+        this.scene.stop(this.scene.key);
+        this.scene.start('Home');
+        const target = this.adventureNode ? 'AdventureMap' : 'ModeSelect';
+        this.scene.launch(target);
+        this.scene.bringToTop(target);
+    }
+
+    handleAdventureComplete(payload){
+        if(!this.adventureNode || payload.nodeId !== this.adventureNode.id || this.ended) return;
+        this.ended = true;
+        if(this.timerEvent) this.timerEvent.remove();
+        showAdventureComplete(this, payload, () => this.exitToMenu());
+    }
+
+    handleAdventureFailed({ nodeId, reason }){
+        if(!this.adventureNode || nodeId !== this.adventureNode.id || this.ended) return;
+        this.ended = true;
+        if(this.timerEvent) this.timerEvent.remove();
+        showAdventureFailed(this, reason, () => this.exitToMenu());
+    }
+
+    // ---- payload dal server (BACKEND/event/game.js + game/match3Engine.js) ----
+
+    handleGameSet(payload){
+        if(!payload || !['match3', 'match3-1vs1'].includes(payload.mode)) return;
+        this.applyGameSet(payload);
+    }
+
+    applyGameSet(payload){
+        const {
+            mode, board, liv = 1, score = 0, totalScore = 0, movesLeft, definition,
+            elapsedMs = 0, levelComplete = null, playerScores = {}, adventureNode = null,
+        } = payload;
+        this.mode = mode;
+        this.liv = liv;
+        this.adventureNode = adventureNode;
+        this.definition = definition;
+        this.score = score;
+        this.totalScore = totalScore;
+        this.movesLeft = movesLeft;
+        this.selected = null;
+        this.busy = false;
+        this.pendingMove = null;
+        this.startTime = Date.now() - elapsedMs;
+
+        if(levelComplete){
+            sfx.levelUp();
+            this.hud.showBonus(`Livello ${levelComplete.previousLiv} completato! +${levelComplete.score}`);
+        }
+
+        this.renderBoard(board);
+        this.updateTitle();
+        this.updateStats(playerScores);
+    }
+
+    layoutForSize(size){
+        const gap = 6;
+        const maxCell = 96;
+        const cellW = (this.boardArea.width - gap * (size - 1)) / size;
+        const cellH = (this.boardArea.height - gap * (size - 1)) / size;
+        const cellSize = Math.min(maxCell, cellW, cellH);
+        const gridSize = cellSize * size + gap * (size - 1);
+        return {
+            cellSize, gap,
+            originX: this.boardArea.x + (this.boardArea.width - gridSize) / 2,
+            originY: this.boardArea.y + (this.boardArea.height - gridSize) / 2,
+        };
+    }
+
+    cellPosition(row, col, layout){
+        return {
+            x: layout.originX + col * (layout.cellSize + layout.gap) + layout.cellSize / 2,
+            y: layout.originY + row * (layout.cellSize + layout.gap) + layout.cellSize / 2,
+        };
+    }
+
+    getTile(row, col){ return this.tiles.find((t) => t.row === row && t.col === col); }
+
+    renderBoard(board, { fallIn = false, cascade = 1 } = {}){
+        this.tiles.forEach((tile) => tile.destroy());
+        this.tiles = [];
+        const layout = this.layoutForSize(board.length);
+        const animate = fallIn && GameSettings.effectsEnabled;
+
+        board.forEach((line, row) => line.forEach((cell, col) => {
+            const pos = this.cellPosition(row, col, layout);
+            const tile = new Match3Tile(this, { value: cell.value, special: cell.special });
+            tile.setScale(layout.cellSize / MATCH3_TILE_BASE);
+            tile.row = row;
+            tile.col = col;
+            tile.on('pointerup', () => this.onTileClick(tile.row, tile.col));
+
+            if(animate){
+                tile.setPosition(pos.x, pos.y - (35 + row * 3) * (layout.cellSize / 96));
+                tile.setAlpha(0.35);
+                this.tweens.add({
+                    targets: tile, x: pos.x, y: pos.y, alpha: 1,
+                    duration: 260 + Math.min(cascade, 4) * 35, delay: row * 13, ease: 'Sine.easeOut',
+                });
+            } else {
+                tile.setPosition(pos.x, pos.y);
+            }
+            this.tiles.push(tile);
+        }));
+    }
+
+    // ---- interazione ----
+
+    onTileClick(row, col){
+        if(this.busy) return;
+        const position = { row, col };
+        if(!this.selected){
+            this.selected = position;
+            this.pulseTile(row, col);
+            return;
+        }
+        const previous = this.selected;
+        const distance = Math.abs(previous.row - row) + Math.abs(previous.col - col);
+        if(distance !== 1){
+            this.selected = position;
+            this.pulseTile(row, col);
+            return;
+        }
+        this.selected = null;
+        this.busy = true;
+        this.pendingMove = { previous, position };
+        this.animateSwap(previous, position);
+        socketService.emit('match3 move', { from: previous, to: position });
+    }
+
+    pulseTile(row, col){
+        const tile = this.getTile(row, col);
+        if(!tile || !GameSettings.effectsEnabled) return;
+        const base = tile.scaleX;
+        this.tweens.add({ targets: tile, scaleX: base * 1.14, scaleY: base * 1.14, duration: 130, yoyo: true });
+    }
+
+    animateSwap(a, b){
+        const tileA = this.getTile(a.row, a.col);
+        const tileB = this.getTile(b.row, b.col);
+        if(!tileA || !tileB) return;
+        const ax = tileA.x, ay = tileA.y, bx = tileB.x, by = tileB.y;
+        this.tweens.add({ targets: tileA, x: bx, y: by, duration: 200, ease: 'Sine.easeInOut' });
+        this.tweens.add({ targets: tileB, x: ax, y: ay, duration: 200, ease: 'Sine.easeInOut' });
+        tileA.row = b.row; tileA.col = b.col;
+        tileB.row = a.row; tileB.col = a.col;
+    }
+
+    shakeTile(tile){
+        if(!tile || !GameSettings.effectsEnabled) return;
+        const x = tile.x;
+        this.tweens.add({
+            targets: tile, x: x - 7, duration: 60, yoyo: true, repeat: 3,
+            onComplete: () => tile.setPosition(x, tile.y),
+        });
+    }
+
+    handleMatch3Invalid(){
+        sfx.wrong();
+        shakeCamera(this);
+        if(this.pendingMove){
+            const { previous, position } = this.pendingMove;
+            this.animateSwap(position, previous);
+            this.time.delayedCall(210, () => {
+                this.shakeTile(this.getTile(previous.row, previous.col));
+                this.shakeTile(this.getTile(position.row, position.col));
+            });
+        }
+        this.busy = false;
+        this.pendingMove = null;
+    }
+
+    async handleMatch3State(payload){
+        this.selected = null;
+        this.movesLeft = payload.movesLeft;
+
+        if(payload.mode === 'match3-1vs1'){
+            const myScore = payload.playerScores[socketService.socket.id] || 0;
+            const oppEntry = Object.entries(payload.playerScores).find(([id]) => id !== socketService.socket.id);
+            const oppScore = oppEntry ? oppEntry[1] : 0;
+            this.hud.setStats(`TU: ${myScore} · AVVERSARIO: ${oppScore} · MOSSE: ${this.movesLeft}`);
+            this.hud.showBonus(payload.by === socketService.socket.id ? `+${payload.gained} punti` : `Avversario +${payload.gained}`);
+        } else {
+            this.score = payload.score;
+            this.totalScore = payload.totalScore;
+            this.updateStats();
+            if(payload.steps && payload.steps.length > 1) this.hud.showBonus(`CASCATA ×${payload.steps.length}! +${payload.gained}`);
+            else this.hud.showBonus(`+${payload.gained} punti`);
+        }
+
+        for(const step of (payload.steps || [])){
+            this.renderBoard(step.before);
+            await this.animateClear(step);
+            this.renderBoard(step.after, { fallIn: true, cascade: step.cascade });
+            await this.wait(260 + Math.min(step.cascade, 4) * 35 + (step.after.length - 1) * 13);
+            sfx[step.cascade > 1 ? 'levelUp' : 'match']();
+        }
+
+        this.renderBoard(payload.board);
+        this.busy = false;
+        this.pendingMove = null;
+    }
+
+    wait(ms){ return new Promise((resolve) => this.time.delayedCall(ms, resolve)); }
+
+    async animateClear(step){
+        const promises = [];
+        step.cleared.forEach((cellKey) => {
+            const [row, col] = cellKey.split(':').map(Number);
+            const tile = this.getTile(row, col);
+            if(!tile) return;
+            this.spawnParticles(tile);
+            promises.push(new Promise((resolve) => {
+                this.tweens.add({
+                    targets: tile, scaleX: tile.scaleX * 1.3, scaleY: tile.scaleY * 1.3, alpha: 0, angle: -8,
+                    duration: 300, ease: 'Back.easeIn',
+                    onComplete: () => { tile.destroy(); resolve(); },
+                });
+            }));
+        });
+        await Promise.all(promises);
+    }
+
+    spawnParticles(tile){
+        if(!GameSettings.effectsEnabled) return;
+        for(let i = 0; i < 6; i++){
+            const angle = (Math.PI * 2 * i / 6) + Math.random() * 0.3;
+            const distance = 22 + Math.random() * 22;
+            const particle = this.add.circle(tile.x, tile.y, 4, tile.mainColor || 0xffffff);
+            this.tweens.add({
+                targets: particle,
+                x: tile.x + Math.cos(angle) * distance, y: tile.y + Math.sin(angle) * distance,
+                alpha: 0, duration: 380 + Math.random() * 160, ease: 'Cubic.easeOut',
+                onComplete: () => particle.destroy(),
+            });
+        }
+    }
+
+    // ---- fine partita ----
+
+    handleCampaignLost({ score, elapsedMs, liv }){
+        if(this.mode === 'match3-1vs1' || this.ended) return;
+        this.ended = true;
+        this.showEnd('Mosse terminate', [`Livello raggiunto: ${liv}`, `Punteggio totale: ${score}`, this.formatElapsed(elapsedMs)], true);
+    }
+
+    handleGameOverAck({ score, elapsedMs, liv }){
+        if(this.mode === 'match3-1vs1' || this.ended) return;
+        this.ended = true;
+        this.showEnd('Campagna completata!', [`Hai completato tutti i livelli (fino al ${liv})`, `Punteggio totale: ${score}`, this.formatElapsed(elapsedMs)], true);
+    }
+
+    handleGameResult({ result, reason, score, opponentScore, elapsedMs }){
+        if(this.mode !== 'match3-1vs1' || this.ended) return;
+        this.ended = true;
+        const title = result === 'win' ? 'Hai vinto!' : (result === 'draw' ? 'Pareggio!' : 'Hai perso');
+        const lines = [`Tu: ${score} · Avversario: ${opponentScore}`, this.formatElapsed(elapsedMs)];
+        if(reason === 'opponent-disconnected') lines.push("L'avversario si è disconnesso");
+        this.showEnd(title, lines, result === 'lose');
+    }
+
+    showEnd(title, lines, showNicknamePrompt){
+        if(this.timerEvent) this.timerEvent.remove();
+        showGameEndOverlay(this, { title, lines, showNicknamePrompt, onExit: () => this.exitToMenu() });
+    }
+
+    formatElapsed(elapsedMs){
+        const minutes = Math.floor(elapsedMs / 60000);
+        const seconds = Math.floor((elapsedMs % 60000) / 1000);
+        return `Tempo: ${minutes}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    // ---- HUD ----
+
+    updateTitle(){
+        if(this.adventureNode){
+            this.hud.setLevel(`MAPPA #${this.adventureNode.id} · ${this.adventureNode.title}`);
+            this.hud.setMission(`Raggiungi ${this.definition.targetScore} punti in ${this.definition.moves} mosse`);
+            this.hud.setDeadline('MODALITÀ: MOSSE');
+            return;
+        }
+        const multiplayer = this.mode === 'match3-1vs1';
+        this.hud.setLevel(multiplayer ? 'NUMBER BLAST · 1 VS 1' : `NUMBER BLAST · LIVELLO ${this.liv}/10`);
+        this.hud.setMission(multiplayer
+            ? 'Condividete la griglia: conquista più punti in 30 mosse'
+            : `Raggiungi ${this.definition.targetScore} punti in ${this.definition.moves} mosse`);
+        this.hud.setDeadline('MODALITÀ: MOSSE');
+    }
+
+    updateStats(playerScores){
+        if(this.mode === 'match3-1vs1'){
+            const scores = playerScores || {};
+            const myScore = scores[socketService.socket.id] || this.score;
+            const oppEntry = Object.entries(scores).find(([id]) => id !== socketService.socket.id);
+            const oppScore = oppEntry ? oppEntry[1] : 0;
+            this.hud.setStats(`TU: ${myScore} · AVVERSARIO: ${oppScore} · MOSSE: ${this.movesLeft}`);
+        } else {
+            this.hud.setStats(`PUNTEGGIO: ${this.score}/${this.definition.targetScore} · TOTALE: ${this.totalScore + this.score} · MOSSE: ${this.movesLeft}`);
+        }
+    }
+
+    renderTimer(){
+        const elapsedMs = Math.max(0, Date.now() - this.startTime);
+        const minutes = Math.floor(elapsedMs / 60000);
+        const seconds = Math.floor((elapsedMs % 60000) / 1000);
+        const tenths = Math.floor((elapsedMs % 1000) / 100);
+        const level = elapsedMs >= 120000 ? 'danger' : (elapsedMs >= 60000 ? 'warning' : 'normal');
+        this.hud.setTimer(`TEMPO: ${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${tenths}`, level);
+    }
+}
+</script>

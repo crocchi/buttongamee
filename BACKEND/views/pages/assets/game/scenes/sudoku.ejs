@@ -1,0 +1,304 @@
+<script>
+
+const SUDOKU_CELL_BASE = 100;
+
+// Cella della griglia Sudoku: fissa (indizio, non cliccabile) o vuota (selezionabile), con
+// bordi più marcati sui confini dei riquadri (box) come nel vecchio CSS .box-right/.box-bottom.
+class SudokuCell extends Phaser.GameObjects.Container {
+    constructor(scene, { row, col, value, fixed, boxRight, boxBottom }){
+        super(scene, 0, 0);
+        this.row = row;
+        this.col = col;
+        this.fixedCell = fixed;
+        this.boxRight = boxRight;
+        this.boxBottom = boxBottom;
+        this.state = 'idle';
+
+        this.face = scene.add.graphics();
+        this.label = scene.add.text(0, 0, value ? String(value) : '', {
+            fontFamily: THEME.font, fontSize: '40px', fontStyle: fixed ? '900' : '700',
+            color: fixed ? '#cfe8ff' : '#ffffff',
+        }).setOrigin(0.5);
+        this.add([this.face, this.label]);
+        this.redraw();
+
+        if(!fixed){
+            this.setInteractive(
+                new Phaser.Geom.Rectangle(-SUDOKU_CELL_BASE / 2, -SUDOKU_CELL_BASE / 2, SUDOKU_CELL_BASE, SUDOKU_CELL_BASE),
+                Phaser.Geom.Rectangle.Contains,
+            );
+            this.input.cursor = 'pointer';
+        }
+        scene.add.existing(this);
+    }
+
+    redraw(){
+        this.face.clear();
+        let fill = this.fixedCell ? 0x1c262e : 0x233039;
+        if(this.state === 'selected') fill = 0x2d4a5c;
+        else if(this.state === 'solved') fill = 0x1d3a2a;
+        else if(this.state === 'wrong') fill = 0x4a2222;
+
+        this.face.fillStyle(fill, 1);
+        this.face.fillRect(-SUDOKU_CELL_BASE / 2, -SUDOKU_CELL_BASE / 2, SUDOKU_CELL_BASE, SUDOKU_CELL_BASE);
+        this.face.lineStyle(1, 0x0b0f13, 0.6);
+        this.face.strokeRect(-SUDOKU_CELL_BASE / 2, -SUDOKU_CELL_BASE / 2, SUDOKU_CELL_BASE, SUDOKU_CELL_BASE);
+
+        this.face.lineStyle(4, 0x0b0f13, 1);
+        if(this.boxRight) this.face.lineBetween(SUDOKU_CELL_BASE / 2, -SUDOKU_CELL_BASE / 2, SUDOKU_CELL_BASE / 2, SUDOKU_CELL_BASE / 2);
+        if(this.boxBottom) this.face.lineBetween(-SUDOKU_CELL_BASE / 2, SUDOKU_CELL_BASE / 2, SUDOKU_CELL_BASE / 2, SUDOKU_CELL_BASE / 2);
+
+        if(this.state === 'selected'){
+            this.face.lineStyle(4, 0x3ec6ff, 1);
+            this.face.strokeRect(-SUDOKU_CELL_BASE / 2 + 2, -SUDOKU_CELL_BASE / 2 + 2, SUDOKU_CELL_BASE - 4, SUDOKU_CELL_BASE - 4);
+        }
+    }
+
+    setValue(value){ this.label.setText(value ? String(value) : ''); }
+    setState(state){ this.state = state; this.redraw(); }
+}
+
+class SudokuScene extends Phaser.Scene {
+    constructor(){ super('Sudoku'); }
+
+    init(data){
+        this.initialPayload = data && data.payload;
+        this.cells = [];
+        this.definition = { size: 9, maxValue: 9, boxRows: 3, boxCols: 3, label: 'Sudoku' };
+        this.level = 1;
+        this.errors = 0;
+        this.totalScore = 0;
+        this.selected = null;
+        this.startTime = Date.now();
+        this.ended = false;
+        this.adventureNode = null;
+        this.padButtons = [];
+    }
+
+    create(){
+        const { width, height } = this.scale;
+        const bg = this.add.graphics();
+        bg.fillGradientStyle(THEME.bgTop, THEME.bgTop, THEME.bgBottom, THEME.bgBottom, 1);
+        bg.fillRect(0, 0, width, height);
+
+        this.hud = new HUDBar(this, { onBack: () => this.exitToMenu() });
+        this.padHeight = 76;
+        const top = this.hud.height + 20;
+        this.boardArea = { x: 30, y: top, width: width - 60, height: height - top - this.padHeight - 48 };
+        this.padY = this.boardArea.y + this.boardArea.height + 46;
+
+        this.onSudokuSet = (payload) => this.applySudokuSet(payload);
+        this.onSudokuCell = (payload) => this.handleSudokuCell(payload);
+        this.onSudokuComplete = (payload) => this.handleSudokuComplete(payload);
+
+        socketService.on('sudokuSet', this.onSudokuSet);
+        socketService.on('sudokuCell', this.onSudokuCell);
+        socketService.on('sudokuComplete', this.onSudokuComplete);
+        this.onAdventureNodeComplete = (payload) => this.handleAdventureComplete(payload);
+        this.onAdventureNodeFailed = (payload) => this.handleAdventureFailed(payload);
+        socketService.on('adventureNodeComplete', this.onAdventureNodeComplete);
+        socketService.on('adventureNodeFailed', this.onAdventureNodeFailed);
+
+        this.events.once('shutdown', () => {
+            socketService.off('sudokuSet', this.onSudokuSet);
+            socketService.off('sudokuCell', this.onSudokuCell);
+            socketService.off('sudokuComplete', this.onSudokuComplete);
+            socketService.off('adventureNodeComplete', this.onAdventureNodeComplete);
+            socketService.off('adventureNodeFailed', this.onAdventureNodeFailed);
+            if(this.timerEvent) this.timerEvent.remove();
+        });
+
+        this.timerEvent = this.time.addEvent({ delay: 100, loop: true, callback: () => this.renderTimer() });
+
+        if(this.initialPayload) this.applySudokuSet(this.initialPayload);
+    }
+
+    exitToMenu(){
+        this.scene.stop(this.scene.key);
+        this.scene.start('Home');
+        const target = this.adventureNode ? 'AdventureMap' : 'ModeSelect';
+        this.scene.launch(target);
+        this.scene.bringToTop(target);
+    }
+
+    handleAdventureComplete(payload){
+        if(!this.adventureNode || payload.nodeId !== this.adventureNode.id || this.ended) return;
+        this.ended = true;
+        if(this.timerEvent) this.timerEvent.remove();
+        showAdventureComplete(this, payload, () => this.exitToMenu());
+    }
+
+    handleAdventureFailed({ nodeId, reason }){
+        if(!this.adventureNode || nodeId !== this.adventureNode.id || this.ended) return;
+        this.ended = true;
+        if(this.timerEvent) this.timerEvent.remove();
+        showAdventureFailed(this, reason, () => this.exitToMenu());
+    }
+
+    applySudokuSet(payload){
+        const { board, fixed, errors = 0, elapsedMs = 0, level = 1, definition = null, totalScore = 0, levelComplete = null, adventureNode = null } = payload;
+        this.definition = definition || { size: board.length, maxValue: 9, boxRows: 3, boxCols: 3, label: 'Sudoku' };
+        this.level = level;
+        this.adventureNode = adventureNode;
+        this.errors = errors;
+        this.totalScore = totalScore;
+        this.selected = null;
+        this.startTime = Date.now() - elapsedMs;
+
+        if(levelComplete){
+            sfx.levelUp();
+            this.hud.showBonus(`Livello ${levelComplete.level} completato! +${levelComplete.score} punti`);
+        }
+
+        this.buildBoard(board, fixed);
+        this.buildPad();
+        this.updateTitle();
+        this.updateStats();
+    }
+
+    buildBoard(board, fixed){
+        this.cells.forEach((cell) => cell.destroy());
+        this.cells = [];
+        const size = this.definition.size;
+        const gap = 3;
+        const maxCell = 74;
+        const cellW = (this.boardArea.width - gap * (size - 1)) / size;
+        const cellH = (this.boardArea.height - gap * (size - 1)) / size;
+        const cellSize = Math.min(maxCell, cellW, cellH);
+        const gridSize = cellSize * size + gap * (size - 1);
+        const originX = this.boardArea.x + (this.boardArea.width - gridSize) / 2;
+        const originY = this.boardArea.y + (this.boardArea.height - gridSize) / 2;
+        this.cellScale = cellSize / SUDOKU_CELL_BASE;
+
+        board.forEach((line, row) => line.forEach((value, col) => {
+            const boxRight = (col + 1) % this.definition.boxCols === 0 && col < size - 1;
+            const boxBottom = (row + 1) % this.definition.boxRows === 0 && row < size - 1;
+            const cell = new SudokuCell(this, { row, col, value, fixed: fixed[row][col], boxRight, boxBottom });
+            cell.setScale(this.cellScale);
+            cell.setPosition(originX + col * (cellSize + gap) + cellSize / 2, originY + row * (cellSize + gap) + cellSize / 2);
+            cell.on('pointerup', () => this.onCellClick(cell));
+            this.cells.push(cell);
+        }));
+    }
+
+    buildPad(){
+        this.padButtons.forEach((b) => b.destroy());
+        this.padButtons = [];
+        const count = this.definition.maxValue;
+        const gap = 8;
+        const width = Math.min(56, (this.boardArea.width - gap * (count - 1)) / count);
+        const totalWidth = count * width + (count - 1) * gap;
+        const startX = this.boardArea.x + this.boardArea.width / 2 - totalWidth / 2 + width / 2;
+        for(let value = 1; value <= count; value++){
+            const button = new UIButton(this, startX + (value - 1) * (width + gap), this.padY, width, 52, String(value), {
+                variant: 'ghost', fontSize: 20,
+                onClick: () => this.onPadClick(value),
+            });
+            this.padButtons.push(button);
+        }
+    }
+
+    getCell(row, col){ return this.cells.find((c) => c.row === row && c.col === col); }
+
+    onCellClick(cell){
+        if(cell.fixedCell || cell.state === 'solved') return;
+        if(this.selected){
+            const prev = this.getCell(this.selected.row, this.selected.col);
+            if(prev && prev.state === 'selected') prev.setState('idle');
+        }
+        this.selected = { row: cell.row, col: cell.col };
+        cell.setState('selected');
+    }
+
+    onPadClick(value){
+        if(!this.selected) return;
+        socketService.emit('sudoku input', { row: this.selected.row, col: this.selected.col, value });
+    }
+
+    handleSudokuCell({ row, col, value, correct, errors }){
+        const cell = this.getCell(row, col);
+        if(!cell) return;
+        if(correct){
+            cell.setValue(value);
+            cell.setState('solved');
+            this.selected = null;
+            sfx.match();
+            this.pulseCell(cell);
+        } else {
+            this.errors = errors;
+            this.updateStats();
+            sfx.wrong();
+            shakeCamera(this);
+            cell.setState('wrong');
+            this.shakeCell(cell);
+            this.time.delayedCall(300, () => {
+                if(!cell.active) return;
+                cell.setState(this.selected && this.selected.row === row && this.selected.col === col ? 'selected' : 'idle');
+            });
+        }
+    }
+
+    pulseCell(cell){
+        if(!GameSettings.effectsEnabled) return;
+        this.tweens.add({ targets: cell, scaleX: this.cellScale * 1.18, scaleY: this.cellScale * 1.18, duration: 130, yoyo: true });
+    }
+
+    shakeCell(cell){
+        if(!GameSettings.effectsEnabled) return;
+        const x = cell.x;
+        this.tweens.add({
+            targets: cell, x: x - 6, duration: 55, yoyo: true, repeat: 3,
+            onComplete: () => cell.setPosition(x, cell.y),
+        });
+    }
+
+    handleSudokuComplete({ score, elapsedMs, errors, level = 10 }){
+        if(this.ended) return;
+        this.ended = true;
+        this.showEnd('Campagna Sudoku completata!', [
+            `Fino al livello ${level}`, `Punteggio: ${score} · Errori: ${errors}`, this.formatElapsed(elapsedMs),
+        ], true);
+    }
+
+    showEnd(title, lines, showNicknamePrompt){
+        if(this.timerEvent) this.timerEvent.remove();
+        showGameEndOverlay(this, { title, lines, showNicknamePrompt, onExit: () => this.exitToMenu() });
+    }
+
+    formatElapsed(elapsedMs){
+        const minutes = Math.floor(elapsedMs / 60000);
+        const seconds = Math.floor((elapsedMs % 60000) / 1000);
+        return `Tempo: ${minutes}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    updateTitle(){
+        if(this.adventureNode){
+            this.hud.setLevel(`MAPPA #${this.adventureNode.id} · ${this.adventureNode.title}`);
+            this.hud.setMission(this.definition.size === 3
+                ? 'Completa il quadrato usando una sola volta tutti i numeri da 1 a 9'
+                : `Completa righe, colonne e riquadri ${this.definition.boxRows}×${this.definition.boxCols} con i numeri da 1 a ${this.definition.maxValue}`);
+            this.hud.setDeadline('');
+            return;
+        }
+        const boss = this.level === 10 ? ' · BOSS' : '';
+        this.hud.setLevel(`SUDOKU · LIVELLO ${this.level}/10${boss}`);
+        this.hud.setMission(this.definition.size === 3
+            ? 'Completa il quadrato usando una sola volta tutti i numeri da 1 a 9'
+            : `Completa righe, colonne e riquadri ${this.definition.boxRows}×${this.definition.boxCols} con i numeri da 1 a ${this.definition.maxValue}`);
+        this.hud.setDeadline('');
+    }
+
+    updateStats(){
+        this.hud.setStats(`DIFFICOLTÀ: ${(this.definition.label || '').toUpperCase()} · TOTALE: ${this.totalScore} · ERRORI: ${this.errors}`);
+    }
+
+    renderTimer(){
+        const elapsedMs = Math.max(0, Date.now() - this.startTime);
+        const minutes = Math.floor(elapsedMs / 60000);
+        const seconds = Math.floor((elapsedMs % 60000) / 1000);
+        const tenths = Math.floor((elapsedMs % 1000) / 100);
+        const level = elapsedMs >= 120000 ? 'danger' : (elapsedMs >= 60000 ? 'warning' : 'normal');
+        this.hud.setTimer(`TEMPO: ${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${tenths}`, level);
+    }
+}
+</script>

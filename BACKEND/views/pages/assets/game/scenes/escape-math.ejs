@@ -1,0 +1,265 @@
+<script>
+
+const ESCAPE_TYPE_LABELS = {
+    'add-sub': 'OPERAZIONE', 'mult-div': 'CALCOLO', sequence: 'SEQUENZA',
+    target: 'NUMERO OBIETTIVO', expression: 'ESPRESSIONE',
+};
+
+// Copre 'escape-math' (100 stanze, 3 vite) e 'escape-math-1vs1' (10 porte in parallelo,
+// stesso enigma per entrambi i giocatori). Ricostruisce interamente la card ad ogni domanda,
+// come faceva il vecchio client con buttonArea.replaceChildren().
+class EscapeMathScene extends Phaser.Scene {
+    constructor(){ super('EscapeMath'); }
+
+    init(data){
+        this.initialPayload = data && data.payload;
+        this.mode = 'escape-math';
+        this.level = 1;
+        this.score = 0;
+        this.lives = 3;
+        this.opponentLives = 3;
+        this.roundsTotal = 100;
+        this.puzzleId = null;
+        this.boss = false;
+        this.playerScores = {};
+        this.playerProgress = {};
+        this.answered = false;
+        this.deadlineAt = Date.now();
+        this.startTime = Date.now();
+        this.ended = false;
+        this.adventureNode = null;
+        this.puzzleGroup = null;
+        this.choiceButtons = [];
+    }
+
+    create(){
+        const { width, height } = this.scale;
+        const bg = this.add.graphics();
+        bg.fillGradientStyle(THEME.bgTop, THEME.bgTop, THEME.bgBottom, THEME.bgBottom, 1);
+        bg.fillRect(0, 0, width, height);
+
+        this.hud = new HUDBar(this, { onBack: () => this.exitToMenu() });
+        const top = this.hud.height + 20;
+        this.contentArea = { x: width / 2, y: top + (height - top - 24) / 2, width: Math.min(width - 80, 640) };
+
+        this.onEscapeSet = (payload) => this.applyEscapeState(payload);
+        this.onEscapeState = (payload) => this.applyEscapeState(payload);
+        this.onEscapeVersusUpdate = (payload) => this.handleVersusUpdate(payload);
+        this.onEscapeComplete = (payload) => this.handleEscapeComplete(payload);
+        this.onGameResult = (payload) => this.handleGameResult(payload);
+
+        socketService.on('escapeSet', this.onEscapeSet);
+        socketService.on('escapeState', this.onEscapeState);
+        socketService.on('escapeVersusUpdate', this.onEscapeVersusUpdate);
+        socketService.on('escapeComplete', this.onEscapeComplete);
+        socketService.on('gameResult', this.onGameResult);
+        this.onAdventureNodeComplete = (payload) => this.handleAdventureComplete(payload);
+        this.onAdventureNodeFailed = (payload) => this.handleAdventureFailed(payload);
+        socketService.on('adventureNodeComplete', this.onAdventureNodeComplete);
+        socketService.on('adventureNodeFailed', this.onAdventureNodeFailed);
+
+        this.events.once('shutdown', () => {
+            socketService.off('escapeSet', this.onEscapeSet);
+            socketService.off('escapeState', this.onEscapeState);
+            socketService.off('escapeVersusUpdate', this.onEscapeVersusUpdate);
+            socketService.off('escapeComplete', this.onEscapeComplete);
+            socketService.off('gameResult', this.onGameResult);
+            socketService.off('adventureNodeComplete', this.onAdventureNodeComplete);
+            socketService.off('adventureNodeFailed', this.onAdventureNodeFailed);
+            if(this.timerEvent) this.timerEvent.remove();
+        });
+
+        this.timerEvent = this.time.addEvent({ delay: 100, loop: true, callback: () => this.renderTimer() });
+
+        if(this.initialPayload) this.applyEscapeState(this.initialPayload);
+    }
+
+    exitToMenu(){
+        this.scene.stop(this.scene.key);
+        this.scene.start('Home');
+        const target = this.adventureNode ? 'AdventureMap' : 'ModeSelect';
+        this.scene.launch(target);
+        this.scene.bringToTop(target);
+    }
+
+    handleAdventureComplete(payload){
+        if(!this.adventureNode || payload.nodeId !== this.adventureNode.id || this.ended) return;
+        this.ended = true;
+        if(this.timerEvent) this.timerEvent.remove();
+        showAdventureComplete(this, payload, () => this.exitToMenu());
+    }
+
+    handleAdventureFailed({ nodeId, reason }){
+        if(!this.adventureNode || nodeId !== this.adventureNode.id || this.ended) return;
+        this.ended = true;
+        if(this.timerEvent) this.timerEvent.remove();
+        showAdventureFailed(this, reason, () => this.exitToMenu());
+    }
+
+    applyEscapeState(payload){
+        const {
+            level, score = 0, lives = 3, prompt, choices = [], hint, type, boss = false,
+            timeLimitMs = 30000, puzzleId, elapsedMs = 0, correct, message,
+            mode = 'escape-math', roundsTotal = 100, playerScores = {}, playerProgress = {}, opponentLives = 3,
+            adventureNode = null,
+        } = payload;
+        this.mode = mode;
+        this.level = level;
+        this.adventureNode = adventureNode;
+        this.score = score;
+        this.lives = lives;
+        this.opponentLives = opponentLives;
+        this.roundsTotal = roundsTotal;
+        this.puzzleId = puzzleId;
+        this.boss = boss;
+        this.playerScores = playerScores;
+        this.playerProgress = playerProgress;
+        this.answered = false;
+        this.deadlineAt = Date.now() + timeLimitMs;
+        this.startTime = Date.now() - elapsedMs;
+
+        this.renderPuzzle({ prompt, choices, hint, type, boss });
+        this.updateTitle();
+        this.updateStats();
+
+        if(correct === true){ sfx.levelUp(); this.hud.showBonus(message || 'Porta aperta!'); }
+        if(correct === false){ sfx.wrong(); shakeCamera(this); this.hud.showBonus(message || 'Risposta errata'); }
+    }
+
+    renderPuzzle({ prompt, choices, hint, type, boss }){
+        if(this.puzzleGroup) this.puzzleGroup.destroy();
+        this.choiceButtons = [];
+        const group = this.add.container(0, 0);
+        this.puzzleGroup = group;
+        const { x: cx, y: cy, width } = this.contentArea;
+
+        const doorColor = boss ? THEME.boss : THEME.accent;
+        const doorLock = this.add.text(cx, cy - 190, boss ? '☠' : '∑', {
+            fontFamily: THEME.font, fontSize: '30px', fontStyle: '900', color: '#0b0f13',
+        }).setOrigin(0.5);
+        const doorBg = this.add.circle(cx, cy - 190, 34, doorColor);
+        group.add([doorBg, doorLock]);
+
+        group.add(this.add.text(cx, cy - 120, ESCAPE_TYPE_LABELS[type] || 'ENIGMA', {
+            fontFamily: THEME.font, fontSize: '13px', fontStyle: '700', color: THEME.textMuted,
+        }).setOrigin(0.5));
+
+        group.add(this.add.text(cx, cy - 76, prompt, {
+            fontFamily: THEME.font, fontSize: '38px', fontStyle: '900', color: THEME.text,
+        }).setOrigin(0.5));
+
+        group.add(this.add.text(cx, cy - 30, `INDIZIO: ${hint}`, {
+            fontFamily: THEME.font, fontSize: '13px', color: THEME.textMuted, wordWrap: { width },
+        }).setOrigin(0.5));
+
+        const cols = choices.length > 2 ? 2 : choices.length;
+        const btnWidth = (width - (cols - 1) * 16) / cols;
+        choices.forEach((value, i) => {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            const bx = cx - width / 2 + btnWidth / 2 + col * (btnWidth + 16);
+            const by = cy + 20 + row * 60;
+            const button = new UIButton(this, bx, by, btnWidth, 48, String(value), {
+                variant: 'ghost', fontSize: 20,
+                onClick: () => this.onChoiceClick(value, button),
+            });
+            group.add(button);
+            this.choiceButtons.push(button);
+        });
+    }
+
+    onChoiceClick(value, button){
+        if(this.answered) return;
+        this.answered = true;
+        this.choiceButtons.forEach((b) => b.disableInteractive());
+        this.tweens.add({ targets: button, scaleX: 1.08, scaleY: 1.08, duration: 120, yoyo: true });
+        socketService.emit('escape answer', { answer: value, puzzleId: this.puzzleId });
+    }
+
+    handleVersusUpdate({ playerScores = {}, playerProgress = {}, playerLives = {}, roundsTotal = 10, by, correct, gained }){
+        if(this.mode !== 'escape-math-1vs1') return;
+        this.playerScores = playerScores;
+        this.playerProgress = playerProgress;
+        this.roundsTotal = roundsTotal;
+        const myId = socketService.socket.id;
+        if(myId in playerLives) this.lives = playerLives[myId];
+        const oppEntry = Object.entries(playerLives).find(([id]) => id !== myId);
+        if(oppEntry) this.opponentLives = oppEntry[1];
+        this.updateStats();
+        if(by !== myId){
+            if(correct) this.hud.showBonus(`L'avversario ha aperto una porta${gained ? ` (+${gained})` : ''}`);
+            else if(correct === false) this.hud.showBonus("L'avversario ha perso una vita");
+        }
+    }
+
+    handleEscapeComplete({ win, reason, score, level, elapsedMs }){
+        if(this.mode === 'escape-math-1vs1' || this.ended) return;
+        this.ended = true;
+        const title = win ? 'Sei fuggito da tutte le 100 stanze!' : (reason === 'timeout' ? 'Tempo scaduto' : 'Vite terminate');
+        this.showEnd(title, [`Stanza raggiunta: ${level}`, `Punteggio: ${score}`, this.formatElapsed(elapsedMs)], true);
+    }
+
+    handleGameResult({ result, reason, score, opponentScore, elapsedMs }){
+        if(this.mode !== 'escape-math-1vs1' || this.ended) return;
+        this.ended = true;
+        const title = result === 'win' ? 'Sei evaso per primo!' : (result === 'draw' ? 'Pareggio!' : 'Hai perso');
+        const lines = [`Tu: ${score} · Avversario: ${opponentScore}`, this.formatElapsed(elapsedMs)];
+        if(reason === 'opponent-disconnected') lines.push("L'avversario si è disconnesso");
+        this.showEnd(title, lines, result === 'lose');
+    }
+
+    showEnd(title, lines, showNicknamePrompt){
+        if(this.timerEvent) this.timerEvent.remove();
+        showGameEndOverlay(this, { title, lines, showNicknamePrompt, onExit: () => this.exitToMenu() });
+    }
+
+    formatElapsed(elapsedMs){
+        const minutes = Math.floor(elapsedMs / 60000);
+        const seconds = Math.floor((elapsedMs % 60000) / 1000);
+        return `Tempo: ${minutes}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    updateTitle(){
+        if(this.adventureNode){
+            this.hud.setLevel(`MAPPA #${this.adventureNode.id} · ${this.adventureNode.title}`);
+            this.hud.setMission('Scegli la risposta corretta prima che la porta si blocchi');
+            return;
+        }
+        const multiplayer = this.mode === 'escape-math-1vs1';
+        this.hud.setLevel(multiplayer
+            ? `ESCAPE MATH · 1 VS 1 · PORTA ${this.level}/${this.roundsTotal}`
+            : `ESCAPE MATH · STANZA ${this.level}/100${this.boss ? ' · BOSS' : ''}`);
+        this.hud.setMission(multiplayer
+            ? 'Stessi enigmi: apri per primo tutte le porte'
+            : 'Scegli la risposta corretta prima che la porta si blocchi');
+    }
+
+    updateStats(){
+        if(this.mode === 'escape-math-1vs1'){
+            const myId = socketService.socket.id;
+            const myScore = this.playerScores[myId] ?? this.score;
+            const oppEntry = Object.entries(this.playerScores).find(([id]) => id !== myId);
+            const oppScore = oppEntry ? oppEntry[1] : 0;
+            const myProgress = this.playerProgress[myId] || 0;
+            const oppProgress = oppEntry ? (this.playerProgress[oppEntry[0]] || 0) : 0;
+            this.hud.setStats(`TU: ${myScore} (♥${this.lives}) · AVVERSARIO: ${oppScore} (♥${this.opponentLives}) · PORTE: ${myProgress}–${oppProgress}/${this.roundsTotal}`);
+        } else {
+            this.hud.setStats(`PUNTEGGIO: ${this.score} · VITE: ${'♥'.repeat(this.lives)}${'♡'.repeat(Math.max(0, 3 - this.lives))}`);
+        }
+    }
+
+    renderTimer(){
+        const elapsedMs = Math.max(0, Date.now() - this.startTime);
+        const minutes = Math.floor(elapsedMs / 60000);
+        const seconds = Math.floor((elapsedMs % 60000) / 1000);
+        const tenths = Math.floor((elapsedMs % 1000) / 100);
+        const level = elapsedMs >= 120000 ? 'danger' : (elapsedMs >= 60000 ? 'warning' : 'normal');
+        this.hud.setTimer(`TEMPO: ${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${tenths}`, level);
+
+        const remainingMs = Math.max(0, this.deadlineAt - Date.now());
+        const remainingSeconds = Math.floor(remainingMs / 1000);
+        const remainingTenths = Math.floor((remainingMs % 1000) / 100);
+        this.hud.setDeadline(`PORTA: ${remainingSeconds}.${remainingTenths}s`, remainingMs <= 5000);
+    }
+}
+</script>

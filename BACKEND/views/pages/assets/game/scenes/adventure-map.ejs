@@ -1,0 +1,176 @@
+<script>
+
+// Bottone-nodo della mappa: icona del gioco, numero, stelle (se sbloccato) o lucchetto.
+// Colore diverso per completato/boss/disponibile, coerente con la palette dell'app.
+class AdventureNodeButton extends Phaser.GameObjects.Container {
+    constructor(scene, x, y, size, node, { unlocked, stars, onClick }){
+        super(scene, x, y);
+        this.node = node;
+
+        let fill = 0x1c2b38;
+        let border = THEME.accent;
+        if(!unlocked){ fill = 0x1a2126; border = 0x2a333a; }
+        else if(stars > 0){ fill = 0x1d3a2a; border = THEME.success; }
+        else if(node.boss){ fill = 0x2f1f42; border = THEME.boss; }
+
+        const bg = scene.add.graphics();
+        bg.fillStyle(fill, 1);
+        bg.fillRoundedRect(-size / 2, -size / 2, size, size, 14);
+        bg.lineStyle(3, border, 1);
+        bg.strokeRoundedRect(-size / 2, -size / 2, size, size, 14);
+        this.add(bg);
+
+        this.add(scene.add.text(0, -size * 0.18, unlocked ? node.icon : '🔒', {
+            fontFamily: THEME.font, fontSize: `${Math.round(size * 0.26)}px`, color: '#ffffff',
+        }).setOrigin(0.5));
+
+        this.add(scene.add.text(0, size * 0.12, String(node.id), {
+            fontFamily: THEME.font, fontSize: `${Math.round(size * 0.2)}px`, fontStyle: '900', color: '#ffffff',
+        }).setOrigin(0.5));
+
+        if(unlocked){
+            this.add(scene.add.text(0, size * 0.36, `${'★'.repeat(stars)}${'☆'.repeat(Math.max(0, 3 - stars))}`, {
+                fontFamily: THEME.font, fontSize: `${Math.round(size * 0.15)}px`, color: THEME.gold,
+            }).setOrigin(0.5));
+
+            this.setInteractive(
+                new Phaser.Geom.Rectangle(-size / 2, -size / 2, size, size),
+                Phaser.Geom.Rectangle.Contains,
+            );
+            this.input.cursor = 'pointer';
+            this.on('pointerover', () => this.setScale(1.06));
+            this.on('pointerout', () => this.setScale(1));
+            this.on('pointerup', () => { if(onClick) onClick(); });
+        }
+
+        scene.add.existing(this);
+    }
+}
+
+// Non usa BaseModalScene (pannello troppo piccolo per 20 nodi): è una scena a tutto schermo
+// con un proprio rettangolo di sfondo interattivo, che blocca i click verso Home sottostante
+// esattamente come fa il backdrop di BaseModalScene per le altre schermate modali.
+class AdventureMapScene extends Phaser.Scene {
+    constructor(){ super('AdventureMap'); }
+
+    init(){
+        this.launching = false;
+    }
+
+    create(){
+        const { width, height } = this.scale;
+        const bg = this.add.graphics();
+        bg.fillGradientStyle(THEME.bgTop, THEME.bgTop, THEME.bgBottom, THEME.bgBottom, 1);
+        bg.fillRect(0, 0, width, height);
+        this.add.rectangle(0, 0, width, height, 0x000000, 0).setOrigin(0).setInteractive();
+
+        // Sotto i ~480px la descrizione va in overlap con il contatore stelle: su mobile la
+        // nascondo e restringo titolo/badge invece di far leggere testo sovrapposto.
+        const isNarrow = width < 480;
+        this.add.rectangle(0, 0, width, 88, 0x0d1318, 0.92).setOrigin(0);
+        new UIButton(this, 66, 24, 108, 32, 'Menu', {
+            icon: '‹', variant: 'ghost', fontSize: 13,
+            onClick: () => { this.scene.stop(this.scene.key); this.scene.start('Home'); },
+        });
+        this.add.text(190, isNarrow ? 20 : 10, isNarrow ? '🗺  AVVENTURA' : '🗺  MAPPA AVVENTURA', {
+            fontFamily: THEME.font, fontSize: isNarrow ? '16px' : '20px', fontStyle: '900', color: THEME.text,
+        });
+        if(!isNarrow){
+            this.add.text(190, 40, 'Completa i nodi, raccogli le stelle e sblocca il mondo successivo.', {
+                fontFamily: THEME.font, fontSize: '13px', color: THEME.textMuted,
+            });
+        }
+        this.starsText = this.add.text(width - 30, isNarrow ? 24 : 26, '', {
+            fontFamily: THEME.font, fontSize: isNarrow ? '13px' : '16px', fontStyle: '900', color: THEME.gold,
+        }).setOrigin(1, 0);
+
+        this.contentArea = { x: 40, y: 108, width: width - 80, height: height - 108 - 24 };
+        this.bodyGroup = this.add.container(0, 0);
+        this.loadingText = this.add.text(this.contentArea.x, this.contentArea.y + 20, 'Caricamento della mappa…', {
+            fontFamily: THEME.font, fontSize: '15px', color: THEME.textMuted,
+        });
+
+        this.onAdventureData = (payload) => this.renderMap(payload);
+        this.onAdventureError = ({ message } = {}) => window.alert(message || 'Errore nella Mappa Avventura.');
+        socketService.on('adventureData', this.onAdventureData);
+        socketService.on('adventureError', this.onAdventureError);
+        this.events.once('shutdown', () => {
+            socketService.off('adventureData', this.onAdventureData);
+            socketService.off('adventureError', this.onAdventureError);
+        });
+
+        socketService.emit('adventure request');
+    }
+
+    renderMap(payload){
+        this.loadingText.setVisible(false);
+        this.bodyGroup.destroy();
+        this.bodyGroup = this.add.container(0, 0);
+
+        const worlds = payload.worlds || [];
+        const nodes = payload.nodes || [];
+        const progress = payload.progress || [];
+        const progressByNode = new Map(progress.map((row) => [Number(row.node_id), row]));
+        const totalStars = Array.from(progressByNode.values()).reduce((sum, row) => sum + Number(row.stars || 0), 0);
+        this.starsText.setText(`★ ${totalStars}/${nodes.length * 3}`);
+
+        const { x, y, width } = this.contentArea;
+        const gap = 12;
+        const maxNodeSize = 84;
+        const minNodeSize = 46;
+        let cursorY = y;
+
+        worlds.forEach((world) => {
+            const worldNodes = nodes.filter((node) => node.world === world.id);
+            const completedCount = worldNodes.filter((node) => progressByNode.has(node.id)).length;
+
+            this.bodyGroup.add(this.add.text(x, cursorY, `MONDO ${world.id} · ${world.name}`, {
+                fontFamily: THEME.font, fontSize: '18px', fontStyle: '900', color: THEME.text,
+            }));
+            this.bodyGroup.add(this.add.text(x, cursorY + 24, world.description, {
+                fontFamily: THEME.font, fontSize: '13px', color: THEME.textMuted,
+            }));
+            this.bodyGroup.add(this.add.text(x + width, cursorY, `${completedCount}/10`, {
+                fontFamily: THEME.font, fontSize: '16px', fontStyle: '900', color: THEME.gold,
+            }).setOrigin(1, 0));
+
+            // su schermi larghi i nodi stanno tutti su una riga; su mobile nodeSize scende fino
+            // al minimo leggibile e, se non basta comunque, la riga si spezza su più righe.
+            let cols = worldNodes.length;
+            let nodeSize = Math.min(maxNodeSize, (width - gap * (cols - 1)) / cols);
+            if(nodeSize < minNodeSize){
+                cols = Math.max(1, Math.floor((width + gap) / (minNodeSize + gap)));
+                nodeSize = minNodeSize;
+            }
+            const rows = Math.ceil(worldNodes.length / cols);
+            const rowY0 = cursorY + 76;
+
+            worldNodes.forEach((node, i) => {
+                const result = progressByNode.get(node.id);
+                const unlocked = node.id === 1 || progressByNode.has(node.id - 1);
+                const stars = Number((result && result.stars) || 0);
+                const row = Math.floor(i / cols);
+                const col = i % cols;
+                const rowNodeCount = Math.min(cols, worldNodes.length - row * cols);
+                const rowWidth = rowNodeCount * nodeSize + (rowNodeCount - 1) * gap;
+                const rowStartX = x + (width - rowWidth) / 2 + nodeSize / 2;
+                const button = new AdventureNodeButton(
+                    this, rowStartX + col * (nodeSize + gap), rowY0 + row * (nodeSize + gap), nodeSize, node,
+                    { unlocked, stars, onClick: () => this.startNode(node) },
+                );
+                this.bodyGroup.add(button);
+            });
+
+            cursorY = rowY0 + rows * (nodeSize + gap) - gap + 44;
+        });
+    }
+
+    startNode(node){
+        if(this.launching) return;
+        this.launching = true;
+        socketService.emit('adventure start', node.id);
+        // rete di sicurezza: se il server non dovesse rispondere, riabilita i click sui nodi
+        this.time.delayedCall(1500, () => { this.launching = false; });
+    }
+}
+</script>

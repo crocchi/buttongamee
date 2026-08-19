@@ -1,0 +1,44 @@
+<script>
+
+// Router centrale: qualunque scena (ModeSelect o AdventureMap) avvia una partita emettendo i
+// soliti eventi socket ('game start', 'pairs start', 'adventure start', ...); chi apre
+// effettivamente la scena di gioco giusta è deciso qui, in un unico posto, per non duplicare
+// la stessa logica in ogni punto d'ingresso.
+const GAME_SCENE_BY_MODE = {
+    campain: 'Pairs', pairs: 'Pairs', 'pairs-1vs1': 'Pairs',
+    match3: 'Match3', 'match3-1vs1': 'Match3',
+};
+
+function launchGameScene(key, payload){
+    // window.buttonGame.scene è il SceneManager globale (non il ScenePlugin di una Scene):
+    // usa run()/stop() invece di launch()/stop() del ScenePlugin, stessa semantica ma API diversa.
+    const manager = window.buttonGame.scene;
+    ['ModeSelect', 'AdventureMap', 'Stats', 'Settings'].forEach((k) => { if(manager.isActive(k)) manager.stop(k); });
+    if(manager.isActive('Home')) manager.stop('Home');
+    manager.run(key, { payload });
+    manager.bringToTop(key);
+}
+
+socketService.on('gameSet', (payload) => {
+    const key = payload && GAME_SCENE_BY_MODE[payload.mode];
+    if(key) launchGameScene(key, payload);
+});
+socketService.on('sudokuSet', (payload) => launchGameScene('Sudoku', payload));
+socketService.on('escapeSet', (payload) => launchGameScene('EscapeMath', payload));
+
+// Le scene di menu ricalcolano il layout dal proprio scale.width/height in create(), quindi un
+// restart le riadatta correttamente a un resize (orientamento del telefono, finestra ridimensionata).
+// Le scene di gioco NON vengono riavviate: perderebbero lo stato locale della partita in corso
+// (tessere, selezioni...) che non è persistito per un ripristino dopo il restart.
+const RESIZE_SAFE_SCENES = ['Home', 'ModeSelect', 'Settings', 'Stats', 'AdventureMap'];
+let resizeDebounce = null;
+window.addEventListener('load', () => {
+    window.buttonGame.scale.on('resize', () => {
+        if(resizeDebounce) clearTimeout(resizeDebounce);
+        resizeDebounce = setTimeout(() => {
+            const manager = window.buttonGame.scene;
+            RESIZE_SAFE_SCENES.forEach((key) => { if(manager.isActive(key)) manager.getScene(key).scene.restart(); });
+        }, 200);
+    });
+});
+</script>
