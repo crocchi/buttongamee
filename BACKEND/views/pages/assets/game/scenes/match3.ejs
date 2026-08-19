@@ -161,7 +161,7 @@ class Match3Scene extends Phaser.Scene {
         this.pendingMove = null;
         this.startTime = Date.now() - elapsedMs;
 
-        this.renderBoard(board);
+        this.renderBoard(board, { fallIn: true, cascade: 1 });
         this.updateTitle();
         this.updateStats(playerScores);
 

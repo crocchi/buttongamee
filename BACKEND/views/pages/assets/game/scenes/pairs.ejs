@@ -307,11 +307,20 @@ class PairsScene extends Phaser.Scene {
             const x = this.boardArea.x + layout.originX + col * (layout.cellSize + layout.gap) + layout.cellSize / 2;
             const y = this.boardArea.y + layout.originY + row * (layout.cellSize + layout.gap) + layout.cellSize / 2;
             const scale = layout.cellSize / PAIR_TILE_BASE;
-            if(animate && GameSettings.effectsEnabled){
-                this.tweens.add({ targets: tile, x, y, scaleX: scale, scaleY: scale, duration: 320, ease: 'Sine.easeInOut' });
-            } else {
+            if(!GameSettings.effectsEnabled){
                 tile.setPosition(x, y);
                 tile.setScale(scale);
+            } else if(animate){
+                this.tweens.add({ targets: tile, x, y, scaleX: scale, scaleY: scale, duration: 320, ease: 'Sine.easeInOut' });
+            } else {
+                // apertura di un nuovo livello: le tessere cadono dall'alto invece di comparire di colpo.
+                tile.setPosition(x, y - 220 - row * 26);
+                tile.setScale(scale);
+                tile.setAlpha(0.35);
+                this.tweens.add({
+                    targets: tile, y, alpha: 1, duration: 380,
+                    delay: row * 40 + col * 12, ease: 'Back.easeOut',
+                });
             }
         });
     }

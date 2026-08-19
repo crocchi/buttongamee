@@ -1,23 +1,26 @@
 <script>
 
+// Colori della fascia di sfondo e del percorso per tema mondo (da BACKEND/game/adventureMap.js:
+// ADVENTURE_WORLDS[].theme, oggi 'meadow'/'city', con un fallback generico per temi futuri).
+const ADVENTURE_WORLD_THEME = {
+    meadow: { bandTop: 0x1d3a2a, bandBottom: 0x122318, path: 0x3f7a54 },
+    city: { bandTop: 0x241f3c, bandBottom: 0x161227, path: 0x5c4f96 },
+};
+
 // Bottone-nodo della mappa: icona del gioco, numero, stelle (se sbloccato) o lucchetto.
-// Colore diverso per completato/boss/disponibile, coerente con la palette dell'app.
+// Colore diverso per completato/boss/disponibile, in stile candy come le tessere di gioco.
 class AdventureNodeButton extends Phaser.GameObjects.Container {
     constructor(scene, x, y, size, node, { unlocked, stars, onClick }){
         super(scene, x, y);
         this.node = node;
 
-        let fill = 0x1c2b38;
-        let border = THEME.accent;
-        if(!unlocked){ fill = 0x1a2126; border = 0x2a333a; }
-        else if(stars > 0){ fill = 0x1d3a2a; border = THEME.success; }
-        else if(node.boss){ fill = 0x2f1f42; border = THEME.boss; }
+        let base = THEME.accent;
+        if(!unlocked) base = 0x2a333a;
+        else if(stars > 0) base = THEME.success;
+        else if(node.boss) base = THEME.boss;
 
         const bg = scene.add.graphics();
-        bg.fillStyle(fill, 1);
-        bg.fillRoundedRect(-size / 2, -size / 2, size, size, 14);
-        bg.lineStyle(3, border, 1);
-        bg.strokeRoundedRect(-size / 2, -size / 2, size, size, 14);
+        drawCandyTile(bg, size, size, base, { radius: size * 0.18, shadow: unlocked, gloss: unlocked });
         this.add(bg);
 
         this.add(scene.add.text(0, -size * 0.18, unlocked ? node.icon : '🔒', {
@@ -118,21 +121,13 @@ class AdventureMapScene extends Phaser.Scene {
         const gap = 12;
         const maxNodeSize = 84;
         const minNodeSize = 46;
+        const waveAmplitude = 36;
         let cursorY = y;
 
         worlds.forEach((world) => {
+            const theme = ADVENTURE_WORLD_THEME[world.theme] || ADVENTURE_WORLD_THEME.meadow;
             const worldNodes = nodes.filter((node) => node.world === world.id);
             const completedCount = worldNodes.filter((node) => progressByNode.has(node.id)).length;
-
-            this.bodyGroup.add(this.add.text(x, cursorY, `MONDO ${world.id} · ${world.name}`, {
-                fontFamily: THEME.font, fontSize: '18px', fontStyle: '900', color: THEME.text,
-            }));
-            this.bodyGroup.add(this.add.text(x, cursorY + 24, world.description, {
-                fontFamily: THEME.font, fontSize: '13px', color: THEME.textMuted,
-            }));
-            this.bodyGroup.add(this.add.text(x + width, cursorY, `${completedCount}/10`, {
-                fontFamily: THEME.font, fontSize: '16px', fontStyle: '900', color: THEME.gold,
-            }).setOrigin(1, 0));
 
             // su schermi larghi i nodi stanno tutti su una riga; su mobile nodeSize scende fino
             // al minimo leggibile e, se non basta comunque, la riga si spezza su più righe.
@@ -144,24 +139,59 @@ class AdventureMapScene extends Phaser.Scene {
             }
             const rows = Math.ceil(worldNodes.length / cols);
             const rowY0 = cursorY + 76;
+            const bandHeight = rows * (nodeSize + gap) - gap + waveAmplitude * 2 + 40;
 
-            worldNodes.forEach((node, i) => {
-                const result = progressByNode.get(node.id);
-                const unlocked = node.id === 1 || progressByNode.has(node.id - 1);
-                const stars = Number((result && result.stars) || 0);
+            // fascia colorata a tema per il mondo (dietro testata, percorso e nodi)
+            const band = this.add.graphics();
+            band.fillGradientStyle(theme.bandTop, theme.bandTop, theme.bandBottom, theme.bandBottom, 0.85);
+            band.fillRoundedRect(x - 16, cursorY - 12, width + 32, bandHeight + 28, 20);
+            this.bodyGroup.add(band);
+
+            this.bodyGroup.add(this.add.text(x, cursorY, `MONDO ${world.id} · ${world.name}`, {
+                fontFamily: THEME.font, fontSize: '18px', fontStyle: '900', color: THEME.text,
+            }));
+            this.bodyGroup.add(this.add.text(x, cursorY + 24, world.description, {
+                fontFamily: THEME.font, fontSize: '13px', color: THEME.textMuted,
+            }));
+            this.bodyGroup.add(this.add.text(x + width, cursorY, `${completedCount}/10`, {
+                fontFamily: THEME.font, fontSize: '16px', fontStyle: '900', color: THEME.gold,
+            }).setOrigin(1, 0));
+
+            // posizioni dei nodi con un'onda verticale: è il "percorso serpeggiante" della mappa.
+            const positions = worldNodes.map((node, i) => {
                 const row = Math.floor(i / cols);
                 const col = i % cols;
                 const rowNodeCount = Math.min(cols, worldNodes.length - row * cols);
                 const rowWidth = rowNodeCount * nodeSize + (rowNodeCount - 1) * gap;
                 const rowStartX = x + (width - rowWidth) / 2 + nodeSize / 2;
-                const button = new AdventureNodeButton(
-                    this, rowStartX + col * (nodeSize + gap), rowY0 + row * (nodeSize + gap), nodeSize, node,
-                    { unlocked, stars, onClick: () => this.startNode(node) },
-                );
+                return {
+                    node, i,
+                    x: rowStartX + col * (nodeSize + gap),
+                    y: rowY0 + row * (nodeSize + gap) + Math.sin(i * 1.05) * waveAmplitude,
+                };
+            });
+
+            if(positions.length > 1){
+                const path = this.add.graphics();
+                path.lineStyle(Math.max(6, nodeSize * 0.14), theme.path, 0.9);
+                path.beginPath();
+                path.moveTo(positions[0].x, positions[0].y);
+                for(let i = 1; i < positions.length; i++) path.lineTo(positions[i].x, positions[i].y);
+                path.strokePath();
+                this.bodyGroup.add(path);
+            }
+
+            positions.forEach(({ node, x: nx, y: ny }) => {
+                const result = progressByNode.get(node.id);
+                const unlocked = node.id === 1 || progressByNode.has(node.id - 1);
+                const stars = Number((result && result.stars) || 0);
+                const button = new AdventureNodeButton(this, nx, ny, nodeSize, node, {
+                    unlocked, stars, onClick: () => this.startNode(node),
+                });
                 this.bodyGroup.add(button);
             });
 
-            cursorY = rowY0 + rows * (nodeSize + gap) - gap + 44;
+            cursorY += bandHeight + 36;
         });
     }
 

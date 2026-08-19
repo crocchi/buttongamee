@@ -33,14 +33,14 @@ class SudokuCell extends Phaser.GameObjects.Container {
     }
 
     redraw(){
-        this.face.clear();
         let fill = this.fixedCell ? 0x1c262e : 0x233039;
         if(this.state === 'selected') fill = 0x2d4a5c;
         else if(this.state === 'solved') fill = 0x1d3a2a;
         else if(this.state === 'wrong') fill = 0x4a2222;
 
-        this.face.fillStyle(fill, 1);
-        this.face.fillRect(-SUDOKU_CELL_BASE / 2, -SUDOKU_CELL_BASE / 2, SUDOKU_CELL_BASE, SUDOKU_CELL_BASE);
+        // niente ombra e raggio quasi nullo: la griglia deve restare continua (celle adiacenti
+        // a contatto), la tessitura candy qui è solo gradiente + riflesso, non una vera "candy".
+        drawCandyTile(this.face, SUDOKU_CELL_BASE, SUDOKU_CELL_BASE, fill, { radius: 3, shadow: false });
         this.face.lineStyle(1, 0x0b0f13, 0.6);
         this.face.strokeRect(-SUDOKU_CELL_BASE / 2, -SUDOKU_CELL_BASE / 2, SUDOKU_CELL_BASE, SUDOKU_CELL_BASE);
 
@@ -175,10 +175,24 @@ class SudokuScene extends Phaser.Scene {
             const boxRight = (col + 1) % this.definition.boxCols === 0 && col < size - 1;
             const boxBottom = (row + 1) % this.definition.boxRows === 0 && row < size - 1;
             const cell = new SudokuCell(this, { row, col, value, fixed: fixed[row][col], boxRight, boxBottom });
-            cell.setScale(this.cellScale);
-            cell.setPosition(originX + col * (cellSize + gap) + cellSize / 2, originY + row * (cellSize + gap) + cellSize / 2);
             cell.on('pointerup', () => this.onCellClick(cell));
             this.cells.push(cell);
+
+            const targetX = originX + col * (cellSize + gap) + cellSize / 2;
+            const targetY = originY + row * (cellSize + gap) + cellSize / 2;
+            if(!GameSettings.effectsEnabled){
+                cell.setScale(this.cellScale);
+                cell.setPosition(targetX, targetY);
+                return;
+            }
+            // la griglia cade dall'alto all'apertura del livello, riga per riga.
+            cell.setScale(this.cellScale);
+            cell.setPosition(targetX, targetY - 180 - row * 18);
+            cell.setAlpha(0.35);
+            this.tweens.add({
+                targets: cell, y: targetY, alpha: 1, duration: 320,
+                delay: row * 35 + col * 8, ease: 'Back.easeOut',
+            });
         }));
     }
 

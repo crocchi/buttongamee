@@ -3,7 +3,19 @@
 class BootScene extends Phaser.Scene {
     constructor(){ super('Boot'); }
 
-    create(){
+    // Il testo di Phaser viene "cotto" nel canvas al momento del disegno: se il web font non è
+    // ancora pronto, il fallback resta fisso anche dopo che il font arriva. Si aspetta al
+    // massimo 2s, poi si procede comunque (degrado tollerabile su connessioni lente/rotte).
+    async create(){
+        await Promise.race([
+            (async () => {
+                try {
+                    await document.fonts.load('700 32px "Baloo 2"');
+                    await document.fonts.ready;
+                } catch (e) { /* fallback al font di sistema */ }
+            })(),
+            new Promise((resolve) => setTimeout(resolve, 2000)),
+        ]);
         this.scene.start('Home');
     }
 }
