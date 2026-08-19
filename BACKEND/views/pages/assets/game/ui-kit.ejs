@@ -15,6 +15,45 @@ const THEME = {
     font: '"Source Sans Pro", sans-serif',
 };
 
+// Schiarisce (delta positivo) o scurisce (delta negativo) un colore impacchettato 0xRRGGBB.
+function shadeColor(color, delta){
+    const c = Phaser.Display.Color.ValueToColor(color);
+    return Phaser.Display.Color.GetColor(
+        Phaser.Math.Clamp(c.red + delta, 0, 255),
+        Phaser.Math.Clamp(c.green + delta, 0, 255),
+        Phaser.Math.Clamp(c.blue + delta, 0, 255),
+    );
+}
+
+// Disegna una "candy" (rounded-rect con gradiente, bordo più scuro della stessa tinta, ombra
+// e doppio riflesso lucido) nel Graphics dato, centrata sull'origine. Riusata dalle tessere di
+// Pairs/Match3 e dai bottoni pieni: è la stessa identità visiva "candy crush" applicata a
+// forme quadrate (tessere) o rettangolari (bottoni).
+function drawCandyTile(g, width, height, baseColor, opts = {}){
+    const radius = opts.radius ?? Math.min(width, height) * 0.2;
+    const light = opts.light ?? shadeColor(baseColor, 36);
+    const dark = opts.dark ?? shadeColor(baseColor, -36);
+    const borderColor = opts.border ?? shadeColor(dark, -50);
+    const shadow = opts.shadow !== false;
+    const gloss = opts.gloss !== false;
+
+    g.clear();
+    if(shadow){
+        g.fillStyle(0x000000, 0.3);
+        g.fillRoundedRect(-width / 2 + 3, -height / 2 + Math.max(4, height * 0.08), width, height, radius);
+    }
+    g.fillGradientStyle(light, light, dark, dark, 1);
+    g.fillRoundedRect(-width / 2, -height / 2, width, height, radius);
+    g.lineStyle(Math.max(2, Math.min(width, height) * 0.035), borderColor, 1);
+    g.strokeRoundedRect(-width / 2 + 1.5, -height / 2 + 1.5, width - 3, height - 3, Math.max(0, radius - 2));
+    if(gloss){
+        g.fillStyle(0xffffff, 0.28);
+        g.fillEllipse(-width * 0.06, -height * 0.27, width * 0.55, height * 0.34);
+        g.fillStyle(0xffffff, 0.14);
+        g.fillEllipse(width * 0.22, height * 0.18, width * 0.22, height * 0.18);
+    }
+}
+
 // Bottone riusabile: rounded-rect disegnato a runtime + testo, con stati hover/press.
 // variant: 'primary' (azione principale) | 'ghost' (secondaria, bordo senza riempimento pieno)
 // | 'success' | 'danger'.
@@ -54,16 +93,21 @@ class UIButton extends Phaser.GameObjects.Container {
 
     draw(brightness){
         this.bg.clear();
-        const fill = Phaser.Display.Color.ValueToColor(this.baseFill);
-        const shade = Phaser.Display.Color.GetColor(
-            Math.min(255, fill.red * brightness),
-            Math.min(255, fill.green * brightness),
-            Math.min(255, fill.blue * brightness),
-        );
-        this.bg.fillStyle(shade, 1);
-        if(this.variant === 'ghost') this.bg.lineStyle(2, THEME.panelBorder, 1);
-        this.bg.fillRoundedRect(-this.btnWidth / 2, -this.btnHeight / 2, this.btnWidth, this.btnHeight, 12);
-        if(this.variant === 'ghost') this.bg.strokeRoundedRect(-this.btnWidth / 2, -this.btnHeight / 2, this.btnWidth, this.btnHeight, 12);
+        if(this.variant === 'ghost'){
+            const fill = Phaser.Display.Color.ValueToColor(this.baseFill);
+            const shade = Phaser.Display.Color.GetColor(
+                Math.min(255, fill.red * brightness),
+                Math.min(255, fill.green * brightness),
+                Math.min(255, fill.blue * brightness),
+            );
+            this.bg.fillStyle(shade, 1);
+            this.bg.lineStyle(2, THEME.panelBorder, 1);
+            this.bg.fillRoundedRect(-this.btnWidth / 2, -this.btnHeight / 2, this.btnWidth, this.btnHeight, 12);
+            this.bg.strokeRoundedRect(-this.btnWidth / 2, -this.btnHeight / 2, this.btnWidth, this.btnHeight, 12);
+            return;
+        }
+        const tint = shadeColor(this.baseFill, Math.round((brightness - 1) * 130));
+        drawCandyTile(this.bg, this.btnWidth, this.btnHeight, tint, { radius: 12, shadow: false });
     }
 
     setLabel(text){ this.labelText.setText(text); }

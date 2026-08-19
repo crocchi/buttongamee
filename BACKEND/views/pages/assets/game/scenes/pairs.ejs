@@ -44,19 +44,25 @@ class PairTile extends Phaser.GameObjects.Container {
     }
 
     redraw(){
-        this.face.clear();
         let fill = this.baseColor;
-        let borderColor = 0x0b0f13;
-        let borderWidth = 3;
-        if(this.state === 'selected'){ borderColor = 0x3ec6ff; borderWidth = 7; }
-        else if(this.state === 'locked'){ borderColor = 0xff5d55; borderWidth = 7; }
-        else if(this.state === 'wrong'){ fill = 0xff5d55; }
-        else if(this.state === 'level-locked'){ fill = 0x2a333a; }
+        let ring = null;
+        if(this.state === 'selected') ring = THEME.accent;
+        else if(this.state === 'locked') ring = THEME.danger;
+        else if(this.state === 'wrong') fill = THEME.danger;
+        else if(this.state === 'level-locked') fill = 0x3a444c;
 
-        this.face.fillStyle(fill, 1);
-        this.face.fillRoundedRect(-PAIR_TILE_BASE / 2, -PAIR_TILE_BASE / 2, PAIR_TILE_BASE, PAIR_TILE_BASE, 18);
-        this.face.lineStyle(borderWidth, borderColor, 1);
-        this.face.strokeRoundedRect(-PAIR_TILE_BASE / 2, -PAIR_TILE_BASE / 2, PAIR_TILE_BASE, PAIR_TILE_BASE, 18);
+        drawCandyTile(this.face, PAIR_TILE_BASE, PAIR_TILE_BASE, fill, {
+            radius: PAIR_TILE_BASE * 0.16,
+            border: ring ? shadeColor(ring, -30) : null,
+        });
+
+        if(ring){
+            this.face.lineStyle(4, ring, 0.85);
+            this.face.strokeRoundedRect(
+                -PAIR_TILE_BASE / 2 - 4, -PAIR_TILE_BASE / 2 - 4,
+                PAIR_TILE_BASE + 8, PAIR_TILE_BASE + 8, PAIR_TILE_BASE * 0.19,
+            );
+        }
     }
 
     setState(state){
@@ -265,8 +271,8 @@ class PairsScene extends Phaser.Scene {
         this.tiles.clear();
 
         this.puzzle.forEach((value, index) => {
-            const color = this.isBonusValue(value)
-                ? 0xffffff
+            const color = value === 'point' ? THEME.gold
+                : value === 'bomb' ? 0x3a1414
                 : Phaser.Display.Color.HSLToColor(((Number(value) * 47) % 360) / 360, 0.65, 0.45).color;
             const tile = new PairTile(this, { value, index, color, noColor: !!(config && config.noColor) });
             tile.on('pointerup', () => this.onTileClick(index));

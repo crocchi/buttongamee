@@ -22,10 +22,7 @@ class Match3Tile extends Phaser.GameObjects.Container {
         this.mainColor = top;
 
         this.face = scene.add.graphics();
-        this.face.fillGradientStyle(top, top, bottom, bottom, 1);
-        this.face.fillRoundedRect(-MATCH3_TILE_BASE / 2, -MATCH3_TILE_BASE / 2, MATCH3_TILE_BASE, MATCH3_TILE_BASE, 16);
-        this.face.lineStyle(3, 0x0b0f13, 0.6);
-        this.face.strokeRoundedRect(-MATCH3_TILE_BASE / 2, -MATCH3_TILE_BASE / 2, MATCH3_TILE_BASE, MATCH3_TILE_BASE, 16);
+        drawCandyTile(this.face, MATCH3_TILE_BASE, MATCH3_TILE_BASE, top, { light: top, dark: bottom, radius: MATCH3_TILE_BASE * 0.14 });
 
         this.label = scene.add.text(0, 0, String(value), {
             fontFamily: THEME.font, fontSize: '42px', fontStyle: '900',
@@ -34,10 +31,12 @@ class Match3Tile extends Phaser.GameObjects.Container {
         this.add([this.face, this.label]);
 
         if(special){
-            const badge = scene.add.text(MATCH3_TILE_BASE / 2 - 20, -MATCH3_TILE_BASE / 2 + 18, MATCH3_SPECIAL_BADGE[special] || '', {
-                fontFamily: THEME.font, fontSize: '22px', fontStyle: '900', color: '#ffffff',
-            }).setOrigin(0.5);
-            this.add(badge);
+            const badgeX = MATCH3_TILE_BASE / 2 - 22;
+            const badgeY = -MATCH3_TILE_BASE / 2 + 22;
+            this.add(scene.add.circle(badgeX, badgeY, 16, 0x0b0f13, 0.55));
+            this.add(scene.add.text(badgeX, badgeY, MATCH3_SPECIAL_BADGE[special] || '', {
+                fontFamily: THEME.font, fontSize: '20px', fontStyle: '900', color: '#ffffff',
+            }).setOrigin(0.5));
         }
 
         this.setInteractive(
