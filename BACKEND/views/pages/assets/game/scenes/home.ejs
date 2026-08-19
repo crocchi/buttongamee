@@ -33,6 +33,16 @@ class HomeScene extends Phaser.Scene {
         this.events.once('shutdown', () => socketService.off('setNick', this.onNick));
     }
 
+    update(time, delta){
+        if(!this.floatingNumbers) return;
+        const dt = delta / 1000;
+        const { width } = this.scale;
+        this.floatingNumbers.forEach((t) => {
+            t.x += t.speed * dt;
+            if(t.x > width + 60) t.x = -60;
+        });
+    }
+
     // In riga singola su schermi larghi; su schermi stretti (mobile) passa a una griglia 2×2
     // per non far uscire i bottoni dal bordo (successo su viewport 390px, prima tagliati).
     buildNav(navItems, width, height){
@@ -75,6 +85,42 @@ class HomeScene extends Phaser.Scene {
         const g = this.add.graphics();
         g.fillGradientStyle(THEME.bgTop, THEME.bgTop, THEME.bgBottom, THEME.bgBottom, 1);
         g.fillRect(0, 0, width, height);
+
+        // macchie di colore morbide (blend "add", si accendono dove si sovrappongono) per dare
+        // atmosfera allo sfondo scuro senza intaccare la leggibilità del testo sopra.
+        [
+            { x: width * 0.15, y: height * 0.22, r: 260, color: THEME.accent },
+            { x: width * 0.85, y: height * 0.14, r: 220, color: THEME.gold },
+            { x: width * 0.78, y: height * 0.88, r: 300, color: THEME.boss },
+            { x: width * 0.08, y: height * 0.85, r: 220, color: THEME.success },
+        ].forEach((b) => {
+            this.add.circle(b.x, b.y, b.r, b.color, 0.1).setBlendMode(Phaser.BlendModes.ADD);
+        });
+
+        this.buildFloatingNumbers(width, height);
+    }
+
+    // Numeri casuali che scorrono da sinistra a destra sullo sfondo, a velocità/opacità diverse
+    // (un accenno di parallasse): un richiamo decorativo al tema "numeri" del gioco.
+    buildFloatingNumbers(width, height){
+        const palette = [THEME.accent, THEME.gold, THEME.success, THEME.danger, THEME.boss, 0xffffff];
+        this.floatingNumbers = [];
+        for(let i = 0; i < 26; i++){
+            const size = Phaser.Math.Between(20, 58);
+            const depth = size / 58;
+            const color = Phaser.Utils.Array.GetRandom(palette);
+            const text = this.add.text(
+                Phaser.Math.Between(-width * 0.5, width * 1.4),
+                Phaser.Math.Between(0, height),
+                String(Phaser.Math.Between(0, 9)),
+                {
+                    fontFamily: THEME.font, fontSize: `${size}px`, fontStyle: '900',
+                    color: `#${color.toString(16).padStart(6, '0')}`,
+                },
+            ).setOrigin(0.5).setAlpha(0.06 + depth * 0.16);
+            text.speed = 16 + depth * 40;
+            this.floatingNumbers.push(text);
+        }
     }
 
     openScene(key){

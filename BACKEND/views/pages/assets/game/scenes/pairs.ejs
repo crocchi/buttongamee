@@ -252,8 +252,6 @@ class PairsScene extends Phaser.Scene {
 
         if(levelComplete){
             this.totalScore = levelComplete.totalScore;
-            sfx.levelUp();
-            this.hud.showBonus(`LIVELLO ${levelComplete.previousLiv} completato! +${levelComplete.score} punti`);
         } else {
             this.totalScore = 0;
         }
@@ -264,6 +262,12 @@ class PairsScene extends Phaser.Scene {
         this.buildBoard(config);
         this.updateHudTitle();
         this.updateStats();
+
+        // dopo aver costruito la board: il banner deve comparire sopra le nuove tessere, non sotto.
+        if(levelComplete){
+            sfx.levelUp();
+            showLevelUpBanner(this, { level: levelComplete.previousLiv, score: levelComplete.score });
+        }
     }
 
     buildBoard(config){

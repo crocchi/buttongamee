@@ -161,14 +161,15 @@ class Match3Scene extends Phaser.Scene {
         this.pendingMove = null;
         this.startTime = Date.now() - elapsedMs;
 
-        if(levelComplete){
-            sfx.levelUp();
-            this.hud.showBonus(`Livello ${levelComplete.previousLiv} completato! +${levelComplete.score}`);
-        }
-
         this.renderBoard(board);
         this.updateTitle();
         this.updateStats(playerScores);
+
+        // dopo aver disegnato la board: il banner deve comparire sopra le nuove tessere, non sotto.
+        if(levelComplete){
+            sfx.levelUp();
+            showLevelUpBanner(this, { level: levelComplete.previousLiv, score: levelComplete.score });
+        }
     }
 
     layoutForSize(size){

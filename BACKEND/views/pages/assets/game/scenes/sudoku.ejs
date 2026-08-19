@@ -145,15 +145,16 @@ class SudokuScene extends Phaser.Scene {
         this.selected = null;
         this.startTime = Date.now() - elapsedMs;
 
-        if(levelComplete){
-            sfx.levelUp();
-            this.hud.showBonus(`Livello ${levelComplete.level} completato! +${levelComplete.score} punti`);
-        }
-
         this.buildBoard(board, fixed);
         this.buildPad();
         this.updateTitle();
         this.updateStats();
+
+        // dopo aver costruito la board: il banner deve comparire sopra le nuove celle, non sotto.
+        if(levelComplete){
+            sfx.levelUp();
+            showLevelUpBanner(this, { level: levelComplete.level, score: levelComplete.score });
+        }
     }
 
     buildBoard(board, fixed){

@@ -309,6 +309,67 @@ function shakeCamera(scene, duration = 120, intensity = 0.004){
     scene.cameras.main.shake(duration, intensity);
 }
 
+// Banner "livello superato" mostrato brevemente sopra il gioco quando Pairs/Match3/Sudoku
+// passano al livello successivo. Non blocca l'input (niente backdrop interattivo): compare con
+// un piccolo rimbalzo, resta un attimo, sparisce da sola mentre la partita prosegue sotto.
+function showLevelUpBanner(scene, { level, score = null, title = 'LIVELLO SUPERATO!' }){
+    const { width, height } = scene.scale;
+    const cx = width / 2;
+    const cy = height / 2 - 40;
+
+    const container = scene.add.container(cx, cy).setScale(0.4).setAlpha(0);
+    const panelWidth = 360;
+    const panelHeight = score !== null ? 150 : 120;
+    const bg = scene.add.graphics();
+    drawCandyTile(bg, panelWidth, panelHeight, THEME.gold, {
+        radius: 26, light: shadeColor(THEME.gold, 40), dark: shadeColor(THEME.gold, -30),
+    });
+    container.add(bg);
+    container.add(scene.add.text(0, score !== null ? -38 : -24, title, {
+        fontFamily: THEME.font, fontSize: '20px', fontStyle: '900', color: '#0b0f13',
+    }).setOrigin(0.5));
+    container.add(scene.add.text(0, score !== null ? 2 : 14, `LIVELLO ${level}`, {
+        fontFamily: THEME.font, fontSize: '32px', fontStyle: '900', color: '#0b0f13',
+    }).setOrigin(0.5));
+    if(score !== null){
+        container.add(scene.add.text(0, 44, `+${score} punti`, {
+            fontFamily: THEME.font, fontSize: '15px', fontStyle: '700', color: '#3a2a00',
+        }).setOrigin(0.5));
+    }
+
+    if(GameSettings.effectsEnabled){
+        for(let i = 0; i < 12; i++){
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 90 + Math.random() * 110;
+            const star = scene.add.text(cx, cy, '★', {
+                fontFamily: THEME.font, fontSize: `${14 + Math.random() * 14}px`, color: '#ffe36f',
+            }).setOrigin(0.5).setAlpha(0);
+            scene.tweens.add({
+                targets: star,
+                x: cx + Math.cos(angle) * distance, y: cy + Math.sin(angle) * distance,
+                alpha: { from: 0, to: 1 }, angle: Phaser.Math.Between(-180, 180),
+                duration: 260,
+                onComplete: () => {
+                    scene.tweens.add({
+                        targets: star, alpha: 0, duration: 500, delay: 450,
+                        onComplete: () => star.destroy(),
+                    });
+                },
+            });
+        }
+    }
+
+    scene.tweens.add({
+        targets: container, scale: 1, alpha: 1, duration: 260, ease: 'Back.easeOut',
+        onComplete: () => {
+            scene.tweens.add({
+                targets: container, alpha: 0, scale: 0.85, duration: 320, delay: 900, ease: 'Sine.easeIn',
+                onComplete: () => container.destroy(),
+            });
+        },
+    });
+}
+
 // Esito di un nodo della Mappa Avventura: sostituisce l'alert() del vecchio client con lo
 // stesso overlay di fine partita, poi richiama onExit (che riporta alla mappa).
 function showAdventureComplete(scene, { nodeId, stars, score }, onExit){
